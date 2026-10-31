@@ -19,7 +19,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 
 | OS | Status |
 |---|---|
-| **Windows 11** (32-bit / 64-bit) | ✅ Supported |
+| **Windows 11** (64-bit) | ✅ Supported |
 | **Windows 10** (32-bit / 64-bit) | ✅ Supported — main dev & test environment |
 | Windows 8.1 | ⚠️ Very likely works, not tested |
 | Windows 7 and older | ❌ Not supported |
