@@ -6,6 +6,10 @@ Push files and folders straight onto the other PC's disk — both machines on th
 **No cloud drive, no Windows file sharing (SMB), no USB stick.** The UI ships in Chinese and
 English, switchable from the home screen.
 
+Transfers resume after a drop; existing files are never silently overwritten; you can push
+the clipboard across with one keystroke; a phone can join through a QR code in its browser;
+closing the window just minimises to the tray so receiving keeps running.
+
 ![Screenshot](docs/screenshot-en.png)
 
 **[⬇ Download LanSplice.exe](https://github.com/podcatcher962/LanSplice/releases/latest)** —
@@ -24,7 +28,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Windows 8.1 | ⚠️ Very likely works, not tested |
 | Windows 7 and older | ❌ Not supported |
 
-**One file, no decision to make: `LanSplice-v1.3.3.exe`.**
+**One file, no decision to make: `LanSplice-v1.4.0.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -315,6 +319,25 @@ An exe produced by 32-bit Python runs on both 32- and 64-bit Windows.
 ---
 
 ## Changelog
+
+**v1.4.0** — resume, no silent overwrite, text transfer, phone web page, tray
+- **Resume**: a broken transfer used to start over from zero, which is painful with a
+  8.9 GB folder. Files are now checkpointed in 16 MB segments and pressing Send again
+  continues from the last complete segment ("Resuming 2.1 GB" in the status bar)
+- **No silent overwrite**: the receiver used to call `os.replace` directly, so an existing
+  file with the same name was silently replaced. Now the incoming file becomes
+  `clip (2).mp4` and the result tells you the final name
+- **Integrity**: SHA-256 per 16 MB segment, checked segment by segment, with the failing
+  segment number reported. Optional "verify after transfer" re-reads the whole file on
+  both ends, which is the only way to catch disk-level read/write errors
+- **Text / clipboard transfer**: Ctrl+Shift+V pushes the local clipboard to the peer
+- **Phone web page**: File → Phone transfer shows a QR code; open it in a phone browser
+  to upload and download. No app to install
+- **Tray**: closing the window minimises to the tray and receiving keeps running; the
+  tray menu can start/stop receiving, toggle autostart and quit
+- **Remember last peer**: reconnects automatically on startup
+- Capability negotiation added, so v1.4 and v1.3 can still talk to each other
+- Automated checks grew from 266 to **329**
 
 **v1.3.3** — English buttons no longer truncated
 - English labels are longer than Chinese, and several buttons had a hard-coded character width,
