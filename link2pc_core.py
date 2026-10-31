@@ -51,6 +51,11 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 PROTO_VER = 1
 MAGIC = b"L2P1"
 
+# 版本号只在这里写一次。
+# 以前图形界面和命令行各写一份，升级时忘了改其中一处，
+# 就会出现「窗口标题 1.5.0、命令行 version 1.4.0」这种自相矛盾。
+APP_VER = "1.5.1"
+
 DISCOVERY_PORT = 47821
 ANNOUNCE_EVERY = 8             # 秒。接收端隔这么久主动宣告一次自己
 TCP_PORT = 47820
@@ -75,6 +80,15 @@ PART_KEEP_DAYS = 7                  # 超过这么多天的残留分片，启动
 # 保证 v1.4 与 v1.3 之间互相连得上（旧版不认识 segh 帧会直接报错）。
 CAP_RESUME = "resume"
 MAX_TEXT = 128 * 1024               # 单条文字上限 128 KB，够贴整段代码
+
+# 建立连接的超时（秒）
+# --------------------
+# 局域网里 RTT 通常不足 5 ms，剩下的时间全花在「对方到底起没起来」上：
+# 对端软件没开时，SYN 会一直重试到系统上限（Windows 21 秒、Linux 130 秒），
+# 用户看到的是「点了发送，然后就没然后了」。3.5 秒是 700 倍 RTT，
+# 慢速 WiFi 也够用，而失败来得足够快，能立刻看到一句解释。
+# 注意：这只管「连上」这一下，连上之后单帧还是要等 300 秒（大文件慢很正常）。
+CONNECT_TIMEOUT = 3.5
 
 FRAME_CTRL = b"C"
 FRAME_DATA = b"D"
@@ -142,6 +156,29 @@ def human_size(n):
 
 def hostname():
     return socket.gethostname()
+
+
+def conn_error_text(exc, ip, port):
+    """
+    把连不上时的底层异常翻成人话。
+
+    以前是直接把 `str(exc)` 拼在「连不上对端：」后面，于是用户看到的是
+    `连不上对端：timed out` —— 一句英文，既没说连的是谁，也没说该怎么办。
+    而「连不上」其实只有两类原因，处理方式完全不同：
+
+      · 端口被拒绝（对端在线，只是没开软件）→ 去把那台机器上的程序打开
+      · 根本没回应（对端不在线 / 不在同一网段）→ 先确认两台在同一个路由器下
+
+    区分开，用户才知道下一步该动哪台机器。
+    """
+    s = str(exc).lower()
+    if "refused" in s or "10061" in s or "积极拒绝" in s:
+        return _t("c069") % (ip, port)
+    if ("timed out" in s or "timeout" in s
+            or "10060" in s or "10065" in s or "10051" in s
+            or "unreachable" in s or "unreach" in s):
+        return _t("c070") % (ip, port)
+    return _t("c071") % (ip, port, exc)
 
 
 def _demo_net_type(ip):
