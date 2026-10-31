@@ -196,8 +196,33 @@ LanSplice.exe version
 | `--verify` | Re-read the whole file on both ends after transfer (slower, catches disk errors) |
 
 `send` prints a progress bar per file and a summary of how many were sent, skipped and how long it
-took. **Exit code `0` means everything succeeded, `1` means something failed** — that is what a
-scheduled task checks before deciding to run again.
+took.
+
+**There are three exit codes** — a scheduled task uses this to decide whether a rerun makes sense:
+
+| Exit code | Meaning | What to do |
+|---|---|---|
+| `0` | everything succeeded (including "already there, skipped") | nothing |
+| `1` | some files went through, some failed | worth rerunning; resume picks up where it stopped |
+| `2` | nothing started: peer unreachable, or wrong pairing code | read the message first, don't just rerun |
+
+`2` is kept apart from `1` because the two need opposite reactions: a wrong pairing code will fail
+identically a hundred times, while a half-finished transfer only needs to be started again. A batch
+script can retry only on `1`.
+
+When it cannot connect, it says which of the two situations you are in:
+
+```
+Cannot reach 192.168.1.20:47820 — nothing is listening there.
+The other machine most likely has LanSplice closed, or this is not its current address
+
+192.168.1.20:47820 gave no answer — the two machines may not be on the same router,
+or the peer is blocked by its firewall. Check that both use the same Wi-Fi or router, then try again
+```
+
+And it decides within **3.5 seconds**. It used to wait 8 seconds, which together with the five
+seconds a single-file exe needs to unpack meant staring at a blank screen for well over ten seconds
+after clicking send — indistinguishable from a hang.
 
 Launching with **no arguments at all** opens the normal GUI; nothing about the old habit changes.
 
@@ -385,13 +410,34 @@ An exe produced by 32-bit Python runs on both 32- and 64-bit Windows.
 
 ## Changelog
 
+**v1.5.1** — plain words when it cannot connect
+- **Rewrote the "cannot connect" message**: it used to be `Can't reach the peer: timed out` —
+  one English fragment, no address, no next step. Now it splits into two cases: nothing
+  listening on that port → "the other machine most likely has LanSplice closed"; no answer at all
+  → "the two machines may not be on the same router, or the peer is blocked by its firewall"
+- **Decides within 3.5 seconds**: the connect timeout dropped from 8s to 3.5s. With the five
+  seconds a single-file exe needs to unpack, clicking send used to leave you staring at a blank
+  screen for well over ten seconds — indistinguishable from a hang
+- **Three exit codes**: `0` all done / `1` some files failed (safe to rerun) / `2` never started
+  (unreachable, wrong pairing code). "Never started" used to report `1` as well, so a batch script
+  could not tell "retry" from "retrying is pointless"
+- **Command line no longer needs the GUI first**: the missing-pairing-code message now mentions
+  `--code` as the alternative
+- **Version number has one source**: the GUI and the CLI each hard-coded it, so a missed edit
+  could leave the window saying 1.5.0 while `version` said 1.4.0. Both now read
+  `link2pc_core.APP_VER`
+- Two new test files: 13 checks for the single-machine case (what the window says when nothing
+  else is on the LAN) and 20 for connection-failure messages; automated checks go from 358 to
+  **391**
+
 **v1.5.0** — folder mirror, command line
 - **Folder mirror**: Tools → Mirror a folder…. Pick a pair of folders and only new or changed
   files are copied; unchanged ones are skipped. Changed files are overwritten in place, and
   extra files on the peer are left alone. Built for keeping an asset folder in step across
   two machines
 - **Command line**: `LanSplice.exe send <path> --to <IP>` with wildcard support, `--overwrite`
-  and `--verify`; plus `devices` (scan the LAN) and `version`. Exit code 0/1, safe to use in
+  and `--verify`; plus `devices` (scan the LAN) and `version`. Exit codes 0/1/2 (2 = cannot
+  reach), safe to use in
   batch files and scheduled tasks
 - **Console attach**: the exe is built windowed, so a call from cmd has to claim the parent
   console with `AttachConsole` first — otherwise it runs completely silently, which is easy to
