@@ -8,7 +8,8 @@ English, switchable from the home screen.
 
 Transfers resume after a drop; existing files are never silently overwritten; you can push
 the clipboard across with one keystroke; a phone can join through a QR code in its browser;
-closing the window just minimises to the tray so receiving keeps running.
+closing the window just minimises to the tray so receiving keeps running; two folders can be
+mirrored with one click, and the same exe doubles as a command-line tool for batch files.
 
 ![Screenshot](docs/screenshot-en.png)
 
@@ -135,6 +136,70 @@ Files with the same name, size and modification time are skipped, never re-sent.
 **Completed items are removed from the list automatically**; failed or cancelled ones stay so you
 can retry. The list supports Ctrl / Shift multi-select, `Delete` or "Remove selected" removes only
 those rows; "Clear all" empties everything. Double-click a row to reveal it in Explorer.
+
+---
+
+## Folder mirror
+
+Everything above is *"here are the files I want to send this time"*. If what you actually want is
+*"keep these two folders in sync"*, use **Tools → Mirror a folder…**:
+
+1. Pick the local folder on the left, type the peer folder on the right (an **absolute path on the
+   other machine**).
+2. Click Start mirror.
+
+The rule is one sentence: **only new and changed files are copied.**
+
+- Present here, missing there → copy
+- Changed here (different size or modification time) → overwrite the copy there
+- Unchanged → skipped, no bandwidth wasted
+- Extra files on the peer side → **never deleted**. A mirror only ever adds; removing files stays
+  your decision
+
+The status line reports "scanned 1,234 files, 17 to copy, 2.1 GB total" before it starts moving
+anything, so you know the size of the job up front.
+
+Files changed locally are **overwritten in place**. This is deliberately different from a normal
+send: a normal send always writes `clip (2).ext` and never touches what is already there, whereas
+a mirror means "make the two sides the same" — renaming would just pile up `(2)`, `(3)`, `(4)` on
+the peer.
+
+---
+
+## Command line
+
+The same exe also takes plain commands, which is handy in batch files, scheduled tasks, or when
+another script needs to push a file.
+
+```bat
+:: send one file
+LanSplice.exe send "D:\video\sample.mp4" --to 192.168.1.20
+
+:: send a whole folder (structure preserved on the peer)
+LanSplice.exe send "D:\assets" --to 192.168.1.20
+
+:: wildcards
+LanSplice.exe send "D:\logs\*.log" --to 192.168.1.20
+
+:: scan the LAN for machines running LanSplice
+LanSplice.exe devices
+
+:: version
+LanSplice.exe version
+```
+
+| Flag | Meaning |
+|---|---|
+| `--to ip[:port]` | Peer address, required. Port defaults to `47820` |
+| `--code XXXX-XXXX-XXXX-XXXX` | Pairing code; falls back to the one saved in local config |
+| `--overwrite` | Replace a same-named file on the peer (default writes `clip (2).ext`) |
+| `--verify` | Re-read the whole file on both ends after transfer (slower, catches disk errors) |
+
+`send` prints a progress bar per file and a summary of how many were sent, skipped and how long it
+took. **Exit code `0` means everything succeeded, `1` means something failed** — that is what a
+scheduled task checks before deciding to run again.
+
+Launching with **no arguments at all** opens the normal GUI; nothing about the old habit changes.
 
 ---
 
@@ -319,6 +384,21 @@ An exe produced by 32-bit Python runs on both 32- and 64-bit Windows.
 ---
 
 ## Changelog
+
+**v1.5.0** — folder mirror, command line
+- **Folder mirror**: Tools → Mirror a folder…. Pick a pair of folders and only new or changed
+  files are copied; unchanged ones are skipped. Changed files are overwritten in place, and
+  extra files on the peer are left alone. Built for keeping an asset folder in step across
+  two machines
+- **Command line**: `LanSplice.exe send <path> --to <IP>` with wildcard support, `--overwrite`
+  and `--verify`; plus `devices` (scan the LAN) and `version`. Exit code 0/1, safe to use in
+  batch files and scheduled tasks
+- **Console attach**: the exe is built windowed, so a call from cmd has to claim the parent
+  console with `AttachConsole` first — otherwise it runs completely silently, which is easy to
+  miss when testing from a terminal. Launched from Explorer with no arguments, it opens a
+  console window of its own so errors are visible
+- Help screen gained a 1.5 section; automated checks go from 329 to **358** (8 for mirror,
+  20 for the command line)
 
 **v1.4.0** — resume, no silent overwrite, text transfer, phone web page, tray
 - **Resume**: a broken transfer used to start over from zero, which is painful with a
