@@ -59,6 +59,23 @@ CHUNK = 512 * 1024                  # 单帧最大明文，512 KB
 HEADER = struct.Struct(">I")        # 帧长度头
 MAX_FRAME = 4 * 1024 * 1024         # 防恶意超大帧（解压炸弹式攻击）
 
+# 完整性校验与断点续传
+# --------------------
+# 把文件按 16 MB 切段，每段单独算 SHA-256，发送端在段末把一个 segh 控制帧
+# 递过去，接收端逐段比对。这样做而不是「整个文件算一个哈希」，有两个原因：
+#   1. 断点续传时只需从「最后一个完整段」的边界接着来，已校验过的段不用重算；
+#   2. 出问题时能指出坏在第几段，而不是只报一句「校验失败」。
+# 16 MB 是权衡：87 MB/s 下 0.18 秒一段，哈希开销完全被网络吃掉；
+# 段再大则续传浪费多，再小则控制帧太密。
+SEG_SIZE = 16 * 1024 * 1024
+PART_DIR = ".l2p-parts"             # 未完成分片的暂存目录（放在目标文件旁边，保证同盘）
+PART_KEEP_DAYS = 7                  # 超过这么多天的残留分片，启动时清掉
+
+# 能力协商：hello 报文里交换，双方都支持才启用新协议，
+# 保证 v1.4 与 v1.3 之间互相连得上（旧版不认识 segh 帧会直接报错）。
+CAP_RESUME = "resume"
+MAX_TEXT = 128 * 1024               # 单条文字上限 128 KB，够贴整段代码
+
 FRAME_CTRL = b"C"
 FRAME_DATA = b"D"
 
@@ -492,6 +509,130 @@ def _free_space(path):
         return None
 
 
+def unique_path(p):
+    """
+    重名时给出一个不冲突的名字：素材.mp4 -> 素材 (2).mp4 -> 素材 (3).mp4 …
+
+    这是「不静默覆盖」的落点。以前接收端直接 os.replace，
+    对端有同名文件就被无声顶掉，对端只看见进度条走完，这是丢数据的隐患。
+    Windows 资源管理器给的是「 - 副本」，这里用 (2) 更好排序、也更好找。
+    """
+    if not os.path.exists(p):
+        return p
+    d, name = os.path.split(p)
+    stem, ext = os.path.splitext(name)
+    if not stem:
+        stem, ext = name, ""
+    for i in range(2, 1000):
+        cand = os.path.join(d, "%s (%d)%s" % (stem, i, ext))
+        if not os.path.exists(cand):
+            return cand
+    # 极端情况：同名太多，退回时间戳，绝不覆盖
+    return os.path.join(d, "%s (%d)%s" % (stem, int(time.time()), ext))
+
+
+def transfer_id(rel, size, mtime):
+    """
+    一次传输的稳定标识。
+
+    同一个文件（同相对路径、同大小、同修改时间）每次算出来的 rid 都一样，
+    所以「传了一半断了，再点一次发送」会自动接上，而不是从头再来。
+    内容变了（大小或时间不同）就是新的 rid，不会把旧分片当成本次的。
+    """
+    raw = "%s|%d|%d" % (rel, int(size), int(mtime or 0))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def clean_parts(root, days=PART_KEEP_DAYS):
+    """
+    清掉过期的残留分片。
+
+    分片是刻意保留的（为了续传），但用户取消过的传输会一直躺在那儿占空间。
+    只删 PART_DIR 里超过 days 天的 .part，绝不碰用户文件。
+    """
+    removed = 0
+    cutoff = time.time() - days * 86400
+    try:
+        for cur, dirs, _files in os.walk(root):
+            if PART_DIR not in dirs:
+                continue
+            pdir = os.path.join(cur, PART_DIR)
+            try:
+                names = os.listdir(pdir)
+            except Exception:
+                continue
+            for n in names:
+                if not n.endswith(".part"):
+                    continue
+                fp = os.path.join(pdir, n)
+                try:
+                    if os.path.getmtime(fp) < cutoff:
+                        os.remove(fp)
+                        removed += 1
+                except Exception:
+                    pass
+            # 目录空了就顺手删掉，别在用户的文件夹里留空壳
+            try:
+                if not os.listdir(pdir):
+                    os.rmdir(pdir)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return removed
+
+
+def _try_json(payload):
+    """控制帧解码，坏了就当空对象，不让一个畸形帧把整条连接带崩。"""
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except Exception:
+        return {}
+
+
+def _rmdir_if_empty(p):
+    if not p:
+        return
+    try:
+        if os.path.isdir(p) and not os.listdir(p):
+            os.rmdir(p)
+    except Exception:
+        pass
+
+
+def file_sha256(path, progress=None, cancel=None):
+    """
+    整文件 SHA-256，带进度与取消。
+
+    分段摘要只能证明「收到的东西和发出的东西一样」，证明不了
+    「读盘时没读错、写盘后没写坏」—— 因为两端算的都是同一份流。
+    真要验证落盘结果，只能各自把文件完整读一遍再对。这个函数就是干这个的，
+    8.9 GB 大概 30~60 秒，所以只在用户主动勾选时才调用。
+    """
+    h = hashlib.sha256()
+    total = 0
+    try:
+        total = os.path.getsize(path)
+    except Exception:
+        pass
+    done = 0
+    with open(path, "rb") as f:
+        while True:
+            if cancel and cancel():
+                raise InterruptedError(_t("c043"))
+            b = f.read(4 * 1024 * 1024)
+            if not b:
+                break
+            h.update(b)
+            done += len(b)
+            if progress:
+                try:
+                    progress(done, total)
+                except Exception:
+                    pass
+    return h.hexdigest()
+
+
 def open_in_file_manager(path):
     """
     用系统文件管理器打开一个目录（Windows 下是资源管理器）。
@@ -549,6 +690,10 @@ class PeerServer(threading.Thread):
             self.running = True
             os.makedirs(self.recv_root, exist_ok=True)
             self.log(_t("c020") % (self.port, self.recv_root))
+            # 清掉过期分片：分片是为续传故意留的，但取消过的传输会一直占地方
+            n = clean_parts(self.recv_root)
+            if n:
+                self.log(_t("c063") % n)
         except Exception as e:
             self.error = str(e)
             self.log(_t("c021") % e)
@@ -736,12 +881,17 @@ class PeerServer(threading.Thread):
         t = msg.get("t")
 
         if t == "hello":
-            ch.send_json({"t": "hello", "name": hostname(), "ver": "1.0",
+            ch.send_json({"t": "hello", "name": hostname(), "ver": "1.4",
+                          "proto": PROTO_VER,
+                          "caps": [CAP_RESUME],
                           "root": self.recv_root})
             return True
 
         if t == "bye":
             return False
+
+        if t == "text":
+            return self._do_text(ch, msg)
 
         if t == "stat":
             return self._do_stat(ch, msg)
@@ -767,6 +917,26 @@ class PeerServer(threading.Thread):
         ch.send_json({"t": "error", "msg": _t("c029") % t})
         return True
 
+    def _do_text(self, ch, msg):
+        """
+        收到一段文字（剪贴板内容、链接、代码片段）。
+
+        不落盘、不写进日志正文：日志只记长度。用户从剪贴板推过来的东西
+        可能是密码或密钥，留在日志里等于埋雷。
+        """
+        body = msg.get("body") or ""
+        if not isinstance(body, str):
+            body = str(body)
+        if len(body.encode("utf-8")) > MAX_TEXT:
+            ch.send_json({"t": "error", "msg": _t("c061") % (MAX_TEXT // 1024)})
+            return True
+        self.log(_t("c062") % len(body))
+        self.notify("recv_text", {"body": body,
+                                  "from": msg.get("from") or "",
+                                  "clip": bool(msg.get("clip"))})
+        ch.send_json({"t": "ok"})
+        return True
+
     def _do_stat(self, ch, msg):
         try:
             p = safe_join(self.recv_root, msg["path"])
@@ -788,6 +958,13 @@ class PeerServer(threading.Thread):
         rel = msg.get("path")
         size = int(msg.get("size") or 0)
         mtime = msg.get("mtime")
+        rid = msg.get("rid") or ""
+        overwrite = bool(msg.get("overwrite"))
+        expect = msg.get("expect") or ""
+        # 只有对端明确说要校验才走新流程。老版本（v1.3.x）不认识 segh 帧，
+        # 给它多发一个控制帧会让它直接报协议错，所以能力协商不能省。
+        use_seg = bool(msg.get("hash")) and bool(rid)
+
         try:
             target = safe_join(self.recv_root, rel)
         except Exception as e:
@@ -799,48 +976,159 @@ class PeerServer(threading.Thread):
             ch.send_json({"t": "error", "msg": _t("c030")})
             return True
 
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        tmp = target + ".l2ptmp"
-        ch.send_json({"t": "ready"})
-        self.notify("recv_begin", {"path": target, "size": size})
+        d = os.path.dirname(target) or os.path.abspath(self.recv_root)
+        os.makedirs(d, exist_ok=True)
 
-        got = 0
+        # ---- 断点续传：找回同一 rid 上次留下的分片
+        part = None
+        offset = 0
+        if use_seg:
+            pdir = os.path.join(d, PART_DIR)
+            try:
+                os.makedirs(pdir, exist_ok=True)
+            except Exception:
+                pass
+            part = os.path.join(pdir, rid + ".part")
+            if os.path.isfile(part):
+                try:
+                    offset = os.path.getsize(part)
+                except Exception:
+                    offset = 0
+                if offset > size:
+                    offset = 0
+                # 只认完整的段：末尾那截不完整的丢掉，让发送端补上。
+                # 这样 offset 永远落在段边界上，续传时分段哈希才对得齐。
+                offset = (offset // SEG_SIZE) * SEG_SIZE
+                try:
+                    with open(part, "r+b") as f:
+                        f.truncate(offset)
+                except Exception:
+                    offset = 0
+
+        # ---- 重名处理：默认绝不覆盖
+        # 续传必须落回原来的名字，否则分片和目标对不上。
+        if offset > 0 or overwrite:
+            final_path = target
+        else:
+            final_path = unique_path(target)
+
+        if offset == 0 and part:
+            try:
+                if os.path.exists(part):
+                    os.remove(part)
+            except Exception:
+                pass
+
+        tmp = part if part else (final_path + ".l2ptmp")
+        root_abs = os.path.abspath(self.recv_root)
+        rel_final = os.path.relpath(final_path, root_abs).replace("\\", "/")
+        renamed = os.path.normcase(final_path) != os.path.normcase(target)
+
+        ch.send_json({"t": "ready", "offset": offset, "path": rel_final})
+        self.notify("recv_begin", {"path": final_path, "size": size,
+                                   "offset": offset, "renamed": renamed})
+
+        got = offset
         t0 = time.time()
+        seg_local = []          # 本端对每一段算出的摘要
+        seg_remote = []         # 对端送来的摘要
+        seg_hasher = hashlib.sha256()
+        corrupt = False
         try:
-            with open(tmp, "wb") as f:
+            with open(tmp, "r+b" if offset else "wb") as f:
+                if offset:
+                    f.seek(offset)
                 while got < size:
-                    data = ch.recv_data()
-                    if not data:
+                    ftype, payload = ch.recv_frame()
+                    if ftype == FRAME_CTRL:
+                        obj = _try_json(payload)
+                        if obj.get("t") == "segh":
+                            seg_remote.append(obj.get("h") or "")
+                        elif obj.get("t") == "error":
+                            raise ProtocolError(obj.get("msg")
+                                                or _t("c031") % (size, got))
                         continue
-                    f.write(data)
-                    got += len(data)
-                    self.notify("recv_progress", {"path": target, "done": got,
+                    if ftype != FRAME_DATA:
+                        continue
+                    f.write(payload)
+                    got += len(payload)
+                    if use_seg:
+                        seg_hasher.update(payload)
+                        if got % SEG_SIZE == 0 or got == size:
+                            seg_local.append(seg_hasher.hexdigest())
+                            seg_hasher = hashlib.sha256()
+                    self.notify("recv_progress", {"path": final_path, "done": got,
                                                   "total": size})
-            if got != size:
-                raise ProtocolError(_t("c031") % (size, got))
+
+                if got != size:
+                    raise ProtocolError(_t("c031") % (size, got))
+
+                # 最后一段的摘要还在路上，读完再比，否则会漏掉尾巴那一刀
+                while use_seg and len(seg_remote) < len(seg_local):
+                    ftype, payload = ch.recv_frame()
+                    if ftype != FRAME_CTRL:
+                        continue
+                    obj = _try_json(payload)
+                    if obj.get("t") == "segh":
+                        seg_remote.append(obj.get("h") or "")
+                    elif obj.get("t") == "error":
+                        raise ProtocolError(obj.get("msg")
+                                            or _t("c031") % (size, got))
+
+            if use_seg and seg_remote != seg_local:
+                bad = 0
+                for i in range(min(len(seg_local), len(seg_remote))):
+                    if seg_local[i] != seg_remote[i]:
+                        bad = i
+                        break
+                corrupt = True
+                raise ProtocolError(_t("c060") % (bad + 1,
+                                                  SEG_SIZE // 1048576))
+
+            if expect:
+                # 整体重读一遍再对。这一步才真正覆盖「读盘/写盘出错」，
+                # 前面的分段摘要只能证明两端算的是同一份流。
+                self.notify("recv_verify", {"path": final_path})
+                actual = file_sha256(tmp)
+                if actual != expect:
+                    corrupt = True
+                    raise ProtocolError(_t("c066"))
+
             if mtime:
                 try:
                     os.utime(tmp, (mtime, mtime))
                 except Exception:
                     pass
-            os.replace(tmp, target)
+            os.replace(tmp, final_path)
             dt = max(time.time() - t0, 0.001)
-            ch.send_json({"t": "done", "bytes": got})
+            ch.send_json({"t": "done", "bytes": got, "path": rel_final})
             self.log(_t("c032") % (
-                rel, human_size(got), got / 1048576.0 / dt))
-            self.notify("recv_done", {"path": target, "size": got})
+                rel_final, human_size(got), (got - offset) / 1048576.0 / dt))
+            self.notify("recv_done", {"path": final_path, "size": got,
+                                      "resumed": offset > 0})
+            if part:
+                _rmdir_if_empty(os.path.dirname(part))
         except Exception as e:
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except Exception:
-                pass
+            # 断线：分片故意留着，下次点发送自动续传。
+            # 校验失败：分片里的数据已经坏了，删掉重来，留着只会一直错。
+            if corrupt and part:
+                try:
+                    os.remove(part)
+                except Exception:
+                    pass
+            elif not part:
+                try:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                except Exception:
+                    pass
             try:
                 ch.send_json({"t": "error", "msg": str(e)})
             except Exception:
                 pass
             self.log(_t("c033") % (rel, e))
-            self.notify("recv_error", {"path": rel, "msg": str(e)})
+            self.notify("recv_error", {"path": rel, "msg": str(e),
+                                       "kept": bool(part) and not corrupt})
         return True
 
     def _do_get(self, ch, msg):
@@ -923,6 +1211,8 @@ class LinkClient:
         self.sock = None
         self.ch = None
         self.peer_name = None
+        self.peer_ver = ""
+        self.peer_caps = ()      # 对端能力集，决定能不能续传/分段校验
         self.peer_root = ""      # 对端接收目录，握手时上报，用于结果里显示"存到哪"
 
     def open(self):
@@ -937,11 +1227,16 @@ class LinkClient:
         s.settimeout(300)
         self.sock = s
         self.ch = _hs_client(s, self.psk)
-        self.ch.send_json({"t": "hello"})
+        self.ch.send_json({"t": "hello", "name": hostname(), "ver": "1.4",
+                           "proto": PROTO_VER, "caps": [CAP_RESUME]})
         info = self.ch.recv_json()
         if info.get("t") != "hello":
             raise ProtocolError(_t("c040"))
         self.peer_name = info.get("name")
+        self.peer_ver = info.get("ver") or ""
+        caps = info.get("caps")
+        # 老版本没有 caps 字段，这里给空元组，后面的新协议特性全部自动退回
+        self.peer_caps = tuple(caps) if isinstance(caps, (list, tuple)) else ()
         # 对端可能回 "E:/新建文件夹" 这种正斜杠写法，统一成本地习惯的形式
         _root = info.get("root") or ""
         self.peer_root = os.path.normpath(_root) if _root else ""
@@ -974,13 +1269,26 @@ class LinkClient:
             raise ProtocolError(r.get("msg") or _t("c041"))
         return r.get("path") or ""
 
-    def upload(self, local_path, rel_path, progress=None, cancel=None):
+    def upload(self, local_path, rel_path, progress=None, cancel=None,
+               overwrite=False, deep_verify=False, verify_progress=None):
         """
         推送一个文件。progress(done, total, speed_bps) 会被频繁调用。
-        返回 (是否跳过, 传输字节, 中断原因)
+
+        返回 (是否跳过, 本次实际发送字节, 对端最终落点相对路径)。
+
+        第三项在对端重名被改名时和 rel_path 不同 —— 界面靠它告诉用户
+        「另存为 xxx (2).mp4」，否则用户去接收目录会找不到文件。
+
+        断点续传：发送前对端会回报已收字节数 offset，从那里接着发。
+        跳过的部分不计入速度，否则续传刚开始会显示一个假的超高速度。
+
+        deep_verify：发送前把整个文件读一遍算出 SHA-256，接收端写完后
+        也读一遍比对。这是唯一能查出「读盘/写盘出错」的办法，
+        代价是两边各多读一遍磁盘，所以默认关，由用户勾选。
         """
         size = os.path.getsize(local_path)
         mtime = int(os.path.getmtime(local_path))
+        v2 = CAP_RESUME in self.peer_caps
 
         # 增量判断：对端已有同大小同修改时间就跳过
         st = self.stat(rel_path)
@@ -990,32 +1298,77 @@ class LinkClient:
             if st.get("size") == size and abs((st.get("mtime") or 0) - mtime) <= 2:
                 if progress:
                     progress(size, size, 0.0)
-                return (True, 0, None)
+                return (True, 0, rel_path)
 
-        self.ch.send_json({"t": "put", "path": rel_path, "size": size, "mtime": mtime})
+        expect = None
+        if deep_verify and v2 and size > 0:
+            expect = file_sha256(local_path, progress=verify_progress,
+                                 cancel=cancel)
+
+        req = {"t": "put", "path": rel_path, "size": size, "mtime": mtime}
+        if v2:
+            req["rid"] = transfer_id(rel_path, size, mtime)
+            req["hash"] = True
+            req["overwrite"] = bool(overwrite)
+            if expect:
+                req["expect"] = expect
+        self.ch.send_json(req)
         resp = self.ch.recv_json()
         if resp.get("t") != "ready":
             raise ProtocolError(resp.get("msg") or _t("c042"))
 
-        sent = 0
+        offset = int(resp.get("offset") or 0) if v2 else 0
+        if offset > size:
+            offset = 0
+        final_rel = resp.get("path") or rel_path
+
+        sent = offset
         t0 = time.time()
+        seg = hashlib.sha256()
         with open(local_path, "rb") as f:
+            f.seek(offset)
             while sent < size:
                 if cancel and cancel():
                     raise InterruptedError(_t("c043"))
-                buf = f.read(CHUNK)
+                buf = f.read(min(CHUNK, size - sent))
                 if not buf:
                     break
                 self.ch.send_data(buf)
                 sent += len(buf)
+                if v2:
+                    seg.update(buf)
+                    # 段末把摘要递过去，再发下一段，对端逐段对账
+                    if sent % SEG_SIZE == 0 or sent == size:
+                        self.ch.send_json({"t": "segh", "h": seg.hexdigest()})
+                        seg = hashlib.sha256()
                 if progress:
                     dt = max(time.time() - t0, 0.001)
-                    progress(sent, size, sent / dt)
+                    progress(sent, size, (sent - offset) / dt)
 
         done = self.ch.recv_json()
         if done.get("t") != "done":
             raise ProtocolError(done.get("msg") or _t("c044"))
-        return (False, sent, None)
+        return (False, sent - offset, final_rel)
+
+    def send_text(self, body, clip=False):
+        """
+        把一段文字推给对端（剪贴板内容或手输的链接）。
+
+        对端会直接弹出来，用户点一下就能粘贴 —— 双机工作流里，
+        这个动作的频率通常比传文件还高。
+        """
+        if not isinstance(body, str):
+            body = str(body)
+        if not body:
+            raise ProtocolError(_t("c064"))
+        if len(body.encode("utf-8")) > MAX_TEXT:
+            raise ProtocolError(_t("c061") % (MAX_TEXT // 1024))
+        self.ch.send_json({"t": "text", "body": body,
+                           "from": hostname(), "clip": bool(clip)})
+        r = self.ch.recv_json()
+        if r.get("t") != "ok":
+            raise ProtocolError(r.get("msg") or _t("c065"))
+        return True
 
     def download(self, rel_path, local_path, progress=None, cancel=None):
         """从对端取回一个文件。返回 (是否跳过, 传输字节)。"""
