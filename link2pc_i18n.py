@@ -903,8 +903,22 @@ S = {
         'Security check',
     ),
     "g224": (
-        '① 两台机器各开一次，左边会显示本机配对码。\n② 让两台的配对码一致：\n   点「复制配对码」，到另一台点「填写对端配对码」粘贴。\n③ 工具 → 重新查找设备，选中对端。\n④ 把文件或文件夹拖进虚线框（也可以点「选择文件/文件夹」）。\n⑤ 点「① 发送到对端」。\n\n文件会存到对端的接收目录（默认 E:\\_xfer），目录结构保持不变。\n同名同大小的文件会自动跳过，不会重传。\n\n首次使用如果对端找不到本机，到「安全 → 放行防火墙」点一次。',
-        "① Open the app on both machines; the pairing code shows on the left.\n② Make the two codes match:\n   click 'Copy code', then on the other machine click 'Enter peer code' and paste.\n③ Tools → Find devices again, select the peer.\n④ Drag files or folders into the dashed box (or use 'Choose files/folder').\n⑤ Click '① Send to peer'.\n\nFiles land in the peer's receive folder (default E:\\_xfer) with the folder structure intact.\nFiles with the same name and size are skipped, never re-sent.\n\nIf the peer can't find this machine the first time, click Security → Allow in firewall once.",
+        '① 两台机器各开一次，左边会显示本机配对码。\n② 让两台的配对码一致：\n   点「复制配对码」，到另一台点「填写对端配对码」粘贴。\n③ 工具 → 重新查找设备，选中对端。\n④ 把文件或文件夹拖进虚线框（也可以点「选择文件/文件夹」）。\n⑤ 点「① 发送到对端」。\n\n文件会存到对端的接收目录（默认 E:\\_xfer），目录结构保持不变。\n同名同大小的文件会自动跳过，不会重传。\n\n首次使用如果对端找不到本机，到「安全 → 放行防火墙」点一次。\n\n'
+        '—— 1.4 新增 ——\n'
+        '· 断点续传：传一半断了，再点一次「发送」会从断的地方接着传，不用从头来。\n'
+        '· 同名不覆盖：对端已经有同名文件时，自动存成「xxx (2).ext」，绝不顶掉旧的。\n'
+        '· 发文字：Ctrl+Shift+V 把本机剪贴板直接推到对端，对端点一下就能粘贴。\n'
+        '· 手机传文件：文件 → 手机传文件，手机扫二维码用浏览器收发，手机不用装任何东西。\n'
+        '· 关窗口只是缩到托盘，接收不中断；托盘右键可开关「开机自动启动」。\n'
+        '· 设置 → 传完再校验文件：慢一些，但能查出读盘、写盘层面的错误。',
+        "① Open the app on both machines; the pairing code shows on the left.\n② Make the two codes match:\n   click 'Copy code', then on the other machine click 'Enter peer code' and paste.\n③ Tools → Find devices again, select the peer.\n④ Drag files or folders into the dashed box (or use 'Choose files/folder').\n⑤ Click '① Send to peer'.\n\nFiles land in the peer's receive folder (default E:\\_xfer) with the folder structure intact.\nFiles with the same name and size are skipped, never re-sent.\n\nIf the peer can't find this machine the first time, click Security → Allow in firewall once.\n\n"
+        "—— New in 1.4 ——\n"
+        "· Resume: if a transfer breaks, press Send again and it continues from where it stopped.\n"
+        "· No silent overwrite: an existing file with the same name becomes 'xxx (2).ext'.\n"
+        "· Send text: Ctrl+Shift+V pushes the local clipboard to the peer.\n"
+        "· Phone transfer: File → Phone transfer, scan the QR code with a phone browser.\n"
+        "· Closing the window only minimises to the tray; receiving keeps running.\n"
+        "· Settings → verify after transfer: slower, but catches disk-level errors.",
     ),
     "g225": (
         '本软件用于同一局域网内的两台自有设备之间传输文件。\n\n· 请勿用于传输违法内容。\n· 请妥善保管配对码，配对码泄露等于把接收目录对外开放。\n· 对端发来的可执行文件请自行判断风险，本软件不做病毒扫描。\n· 作者不对使用本软件造成的任何数据损失或法律后果负责。',
@@ -1197,6 +1211,261 @@ S = {
     "c049": (
         '扫描 %d 块网卡，广播 %d 次，收到 %d 个应答',
         'Scanned %d adapters, sent %d broadcasts, got %d replies',
+    ),
+    # ---- v1.4 完整性校验 / 续传 / 文字互传
+    "c060": (
+        '第 %d 段校验不通过（每段 %d MB），这次传输已作废，请重发',
+        'Checksum mismatch on segment %d (%d MB each); this transfer was '
+        'discarded, please send again',
+    ),
+    "c061": (
+        '文字太长，上限 %d KB',
+        'Text too long, limit is %d KB',
+    ),
+    "c062": (
+        '收到来自对端的文字，%d 个字符',
+        'Received %d characters of text from the peer',
+    ),
+    "c063": (
+        '清理了 %d 个过期分片',
+        'Cleaned up %d stale partial files',
+    ),
+    "c064": (
+        '没有可发送的文字',
+        'Nothing to send',
+    ),
+    "c065": (
+        '对端没有接收这段文字',
+        'The peer did not accept the text',
+    ),
+    "c066": (
+        '整体校验不通过：写入的文件和源文件内容不一致，已删除这次接收的文件',
+        'Full-file checksum mismatch: the written file does not match the '
+        'source, the received file was deleted',
+    ),
+    "c067": (
+        '正在校验已有分片（续传）',
+        'Verifying existing partial data (resuming)',
+    ),
+    "c068": (
+        '已续传 %s，前面 %s 是上次传的',
+        'Resumed at %s, the first %s came from the previous attempt',
+    ),
+    # ---- v1.4 托盘 / 常驻
+    "g300": (
+        '显示主窗口',
+        'Show window',
+    ),
+    "g301": (
+        '打开接收目录',
+        'Open receive folder',
+    ),
+    "g302": (
+        '退出 LanSplice',
+        'Quit LanSplice',
+    ),
+    "g303": (
+        '停止接收',
+        'Stop receiving',
+    ),
+    "g304": (
+        '开始接收',
+        'Start receiving',
+    ),
+    "g305": (
+        '开机自动启动',
+        'Start with Windows',
+    ),
+    "g306": (
+        '写不进开机启动项。多半是被安全软件拦了，\n'
+        '可以手动把 exe 的快捷方式放进「启动」文件夹。',
+        'Could not write the startup entry. Security software may have '
+        'blocked it; you can put a shortcut to the exe in the Startup folder.',
+    ),
+    "g307": (
+        '已设为开机自动启动',
+        'Will start with Windows',
+    ),
+    "g308": (
+        '已取消开机自动启动',
+        'Removed from Windows startup',
+    ),
+    "g309": (
+        '正在接收',
+        'receiving',
+    ),
+    "g310": (
+        '已停止',
+        'stopped',
+    ),
+    "g311": (
+        'LanSplice 还在后台',
+        'LanSplice is still running',
+    ),
+    "g312": (
+        '窗口已缩到托盘，接收不会中断。要真正退出请用托盘右键菜单。',
+        'Minimised to the tray; receiving continues. Use the tray menu to quit.',
+    ),
+    # ---- v1.4 文字互传
+    "g320": (
+        '发文字…',
+        'Send text…',
+    ),
+    "g321": (
+        '发送到对端',
+        'Send to peer',
+    ),
+    "g322": (
+        '文字已送达 %s',
+        'Text delivered to %s',
+    ),
+    "g323": (
+        '发送文字失败：%s',
+        'Could not send the text: %s',
+    ),
+    "g324": (
+        '收到来自 %s 的文字',
+        'Text from %s',
+    ),
+    "g325": (
+        '复制到剪贴板',
+        'Copy to clipboard',
+    ),
+    "g326": (
+        '已复制',
+        'Copied',
+    ),
+    "g327": (
+        '关闭',
+        'Close',
+    ),
+    "g328": (
+        '发剪贴板',
+        'Send clipboard',
+    ),
+    "g329": (
+        '剪贴板里没有文字',
+        'The clipboard has no text',
+    ),
+    "g330": (
+        '收到文字后自动写进剪贴板',
+        'Copy incoming text to the clipboard automatically',
+    ),
+    "g331": (
+        '传完再校验文件（慢，但更可靠）',
+        'Verify the file after transfer (slower, more reliable)',
+    ),
+    "g332": (
+        '校验已有数据 %d%%',
+        'Verifying existing data %d%%',
+    ),
+    "g333": (
+        '上次连的是 %s',
+        'Last connected to %s',
+    ),
+    "g334": (
+        '正在校验 %s%%',
+        'Verifying %s%%',
+    ),
+    "g335": (
+        '续传 %s',
+        'Resuming %s',
+    ),
+    "g336": (
+        '已另存为 %s（对端有同名文件，没有覆盖）',
+        'Saved as %s (a file with that name already existed, nothing was overwritten)',
+    ),
+    "g337": (
+        '分片已保留，再点一次「发送」会自动接着传',
+        'Partial data kept — press Send again to resume',
+    ),
+    "g340": (
+        '请先在左边设备列表里选一台对端',
+        'Pick a peer in the device list first',
+    ),
+    "g341": (
+        '从剪贴板填入',
+        'Fill from clipboard',
+    ),
+    "g342": (
+        '在这里输入或粘贴要发过去的文字：',
+        'Type or paste the text to send:',
+    ),
+    "g343": (
+        '本机剪贴板',
+        'Local clipboard',
+    ),
+    "g344": (
+        '收到文字',
+        'Text received',
+    ),
+    "g345": (
+        '对端已收下（共 %d 字）',
+        'Delivered (%d characters)',
+    ),
+    "g350": (
+        '传完弹通知',
+        'Notify when a transfer finishes',
+    ),
+    "g351": (
+        '传完响一声',
+        'Play a sound when a transfer finishes',
+    ),
+    "g352": (
+        '关窗口时缩到托盘（接收不中断）',
+        'Minimise to tray on close (keeps receiving)',
+    ),
+    "g353": (
+        '开机自动启动',
+        'Start with Windows',
+    ),
+    "g354": (
+        '设置',
+        'Settings',
+    ),
+    "g355": (
+        '打开配置文件夹',
+        'Open settings folder',
+    ),
+    # ---- v1.4 手机网页端
+    "g360": (
+        '手机传文件',
+        'Phone transfer',
+    ),
+    "g361": (
+        '手机和电脑连同一个路由器，用相机扫下面的码，\n'
+        '浏览器打开就能收发文件 —— 手机不用装任何东西。',
+        'Put the phone on the same router, scan the code with the camera,\n'
+        'and use the browser to send or receive. Nothing to install.',
+    ),
+    "g362": (
+        '口令 %s',
+        'Key %s',
+    ),
+    "g363": (
+        '复制链接',
+        'Copy link',
+    ),
+    "g364": (
+        '已复制',
+        'Copied',
+    ),
+    "g365": (
+        '打不开端口 %d，可能被别的程序占用了。\n可以换个端口再试。',
+        'Could not open port %d — something else may be using it.\n'
+        'Try a different port.',
+    ),
+    "g366": (
+        '网页服务只在打开这个窗口时运行，关掉就停。',
+        'The web page only runs while this window is open.',
+    ),
+    "g368": (
+        '在浏览器打开',
+        'Open in browser',
+    ),
+    "g369": (
+        '手机扫这个码',
+        'Scan this with your phone',
     ),
 }
 
