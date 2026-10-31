@@ -107,7 +107,10 @@ def _pair_key(cfg, code):
         return L.code_to_key(code)
     raw = cfg.get("pair_key")
     if not raw:
-        raise SystemExit(_t("cli01"))
+        print(_t("cli01"))
+        # 「还没开始就失败」统一给 2，和「传了一半失败」的 1 分开：
+        # 前者重跑一百次也一样，后者重跑才是对的。
+        raise SystemExit(2)
     return base64.b64decode(raw)
 
 
@@ -119,7 +122,8 @@ def _parse_to(s):
         try:
             return ip.strip(), int(port)
         except Exception:
-            raise SystemExit(_t("cli02") % s)
+            print(_t("cli02") % s)
+            raise SystemExit(2)
     return s, L.TCP_PORT
 
 
@@ -170,7 +174,7 @@ def cmd_send(a):
     paths = _expand(a.paths)
     if not paths:
         print(_t("cli03"))
-        return 1
+        return 2
 
     targets = L.collect_targets(paths)
     if not targets:
@@ -182,12 +186,14 @@ def cmd_send(a):
     print(_t("cli04") % (len(targets), L.human_size(total_bytes), ip, port))
     t0 = time.time()
     try:
-        cli = L.LinkClient(ip, port, key, timeout=8).open()
+        cli = L.LinkClient(ip, port, key, timeout=L.CONNECT_TIMEOUT).open()
     except L.AuthError:
         print(_t("cli05"))
         return 2
     except Exception as e:
-        print(_t("cli06") % e)
+        # 不直接 print(e)：socket 的原文是 "timed out" / "[WinError 10061] ..."，
+        # 对普通用户等于没说。分类之后再讲。
+        print(L.conn_error_text(e, ip, port))
         return 2
 
     ok_n = skip_n = 0
@@ -246,8 +252,7 @@ def cmd_devices(a):
 
 
 def cmd_version(a):
-    from_link = "1.5.0"
-    print("LanSplice %s" % from_link)
+    print("LanSplice %s" % L.APP_VER)
     print("© 永远的兰兰")
     print("https://github.com/podcatcher962/LanSplice")
     return 0
