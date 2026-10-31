@@ -58,38 +58,58 @@ def safe_name(name):
 PAGE = """<!doctype html>
 <html lang="zh"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light">
 <title>LanSplice · 手机传文件</title>
 <style>
   :root{--bg:#eceff1;--card:#fff;--line:#d5dde2;--text:#1f2a30;--sub:#5f7079;
         --green:#2e7d32;--blue:#1976d2;--purple:#6a1b9a}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  body{margin:0;padding:16px 14px 40px;background:var(--bg);color:var(--text);
-       font:16px/1.55 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
-  h1{font-size:20px;margin:0 0 2px}
-  .sub{color:var(--sub);font-size:13px;margin:0 0 16px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
-        padding:14px;margin-bottom:14px}
-  h2{font-size:14px;color:var(--sub);margin:0 0 10px;font-weight:600}
-  button{font:inherit;border:0;border-radius:10px;padding:13px 18px;color:#fff;
-         background:var(--purple);width:100%;font-weight:600}
+  /* 手机屏以「臂长距离」看，字要比桌面大一档：正文 19px、次要 15px。
+     viewport 里不写最大缩放倍数 —— 写了就没法双指放大，是拿无障碍换整齐。 */
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  body{margin:0;padding:18px 16px 48px;background:var(--bg);color:var(--text);
+       font:19px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:.5px}
+  .sub{color:var(--sub);font-size:15px;margin:0 0 18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:16px;margin-bottom:16px}
+  h2{font-size:16px;color:var(--sub);margin:0 0 12px;font-weight:600}
+  button{font:inherit;font-size:19px;border:0;border-radius:12px;padding:16px 18px;
+         color:#fff;background:var(--purple);width:100%;font-weight:600;
+         min-height:56px}
   button:active{opacity:.85}
-  button.gray{background:#607d8b;margin-top:8px}
-  #drop{border:2px dashed var(--line);border-radius:10px;padding:26px 10px;
-        text-align:center;color:var(--sub);font-size:14px;margin-top:10px}
+  button.gray{background:#607d8b;margin-top:10px}
+  #drop{border:2px dashed var(--line);border-radius:12px;padding:30px 12px;
+        text-align:center;color:var(--sub);font-size:16px;margin-top:12px}
   #drop.hot{border-color:var(--purple);color:var(--purple);background:#f7f2fb}
-  .item{display:flex;align-items:center;gap:10px;padding:11px 0;
-        border-bottom:1px solid #eef2f4;font-size:14px}
+  /* 一行放不下「长文件名 + 大小 + 下载」：文件名独占第一行（最多两行），
+     大小和下载排在第二行。字放大之后尤其需要这样，否则名字只剩七八个字。 */
+  .item{display:grid;grid-template-columns:1fr auto;align-items:center;
+        column-gap:12px;row-gap:4px;padding:13px 0;
+        border-bottom:1px solid #eef2f4;font-size:17px}
   .item:last-child{border-bottom:0}
-  .item .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .item .s{color:var(--sub);font-size:12px;flex:none}
-  .item a{color:var(--blue);text-decoration:none;font-size:13px;flex:none}
-  .task{margin-top:10px;font-size:13px}
-  .task .bar{height:6px;background:#e3e9ec;border-radius:3px;overflow:hidden;margin-top:5px}
+  .item .n{grid-column:1/-1;min-width:0;overflow-wrap:anywhere;
+           display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+           overflow:hidden;line-height:1.45}
+  .item .s{grid-column:1;color:var(--sub);font-size:15px}
+  /* 下载是个要点的东西，按 44px 最小触控区给，别做成一串小字 */
+  .item a{grid-column:2;grid-row:2;color:var(--blue);text-decoration:none;
+          font-size:16px;display:inline-flex;align-items:center;
+          justify-content:center;min-height:44px;padding:0 14px;
+          border-radius:10px;background:#e8f1fb}
+  .task{margin-top:12px;font-size:16px}
+  .task .bar{height:8px;background:#e3e9ec;border-radius:4px;overflow:hidden;
+             margin-top:6px}
   .task .bar i{display:block;height:100%;width:0;background:var(--green);
                transition:width .2s}
   .err{color:#c62828}
+  /* 极窄屏（老机型 320~360）再收一点，避免「选择文件发送」被挤断行 */
+  @media (max-width:360px){
+    body{font-size:18px;padding:16px 12px 40px}
+    button{font-size:18px;padding:15px 12px}
+    .item{font-size:16px}
+  }
 </style></head>
 <body>
 <h1>LanSplice</h1>
@@ -394,10 +414,10 @@ class _Handler(BaseHTTPRequestHandler):
 
 _NEED_TOKEN = """<!doctype html><html lang=zh><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<body style="font:16px/1.6 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+<body style="font:18px/1.65 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
 background:#eceff1;color:#1f2a30;padding:40px 22px">
-<h2>需要扫码进入</h2>
-<p style="color:#5f7079">这个页面只对拿到口令的人开放。<br>
+<h2 style="font-size:22px">需要扫码进入</h2>
+<p style="color:#5f7079;font-size:16px">这个页面只对拿到口令的人开放。<br>
 请用电脑上的 LanSplice 打开「手机传文件」，重新扫一次二维码。</p>
 </body></html>"""
 
