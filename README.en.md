@@ -29,7 +29,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Windows 8.1 | ⚠️ Very likely works, not tested |
 | Windows 7 and older | ❌ Not supported |
 
-**One file, no decision to make: `LanSplice-v1.4.0.exe`.**
+**One file, no decision to make: `LanSplice-v1.5.2.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -409,6 +409,20 @@ An exe produced by 32-bit Python runs on both 32- and 64-bit Windows.
 ---
 
 ## Changelog
+
+**v1.5.2** — bigger type on the phone page
+- **One step larger**: body text 16 → 19px, secondary text 13 → 15px, the title 20 → 26px.
+  The desktop sizing was simply too small at arm's length
+- **Pinch zoom works again**: the viewport no longer pins the maximum scale, so the page can
+  be zoomed with two fingers like any other
+- **Finger-sized buttons**: the primary button is 56px tall and each "Download" gets a 44px
+  touch target instead of being a line of small text
+- **Two-line list rows**: the filename owns the first line (up to two lines instead of
+  ellipsising after seven characters), size and Download sit on the second
+- A separate step-down for 320–360px phones keeps button labels on one line
+- Six new legibility assertions (viewport, zoom, font size, touch height, two-line layout)
+
+![Phone page](docs/screenshot-phone.png)
 
 **v1.5.1** — plain words when it cannot connect
 - **Rewrote the "cannot connect" message**: it used to be `Can't reach the peer: timed out` —
