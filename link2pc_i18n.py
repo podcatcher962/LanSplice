@@ -236,11 +236,11 @@ S = {
     ),
     "g057": (
         '移除选中',
-        'Remove selected',
+        'Remove',
     ),
     "g058": (
         'Ctrl+V 或右键粘贴 · Delete 移除',
-        'Ctrl+V or right-click to paste · Delete to remove',
+        'Ctrl+V / right-click to paste · Del to remove',
     ),
     "g059": (
         '大小',
