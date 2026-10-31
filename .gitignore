@@ -1,0 +1,10 @@
+# -*- coding: utf-8 -*-
+__pycache__/
+*.py[cod]
+*.spec
+_build/
+_tests/
+_backup_i18n/
+BAT方案-备用/
+*.exe
+*.log
