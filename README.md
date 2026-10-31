@@ -1,9 +1,14 @@
 # LanSplice · 双机直传
 
+**简体中文** ｜ [English](README.en.md)
+
 两台 Windows 电脑在同一个局域网里，把文件或文件夹直接推到对方硬盘上。
-**不走网盘，不开 Windows 共享，不插 U 盘。** 界面中英双语，右上角一键切换。
+**不走网盘，不开 Windows 共享，不插 U 盘。** 界面中英双语，首页一键切换。
 
 ![界面](docs/screenshot-cn.png)
+
+**[⬇ 下载 LanSplice.exe](https://github.com/podcatcher962/LanSplice/releases/latest)** —
+单文件 16 MB，免安装，32 位 / 64 位 Windows 通用。
 
 作者：© 永远的兰兰
 
@@ -18,7 +23,7 @@
 | Windows 8.1 | ⚠️ 大概率能跑，未实测 |
 | Windows 7 及更早 | ❌ 不支持 |
 
-**只有一个文件，不用挑：`LanSplice-v1.3.1.exe`。**
+**只有一个文件，不用挑：`LanSplice-v1.3.3.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
@@ -74,6 +79,8 @@ Win7 缺必要的系统接口，强行打包也起不来。另外 Win7 早已停
 英文模式下窗口标题是 `LanSplice · Direct PC Transfer`，菜单、对话框、帮助、
 诊断输出、日志全部是英文，没有半中半英。
 
+![English UI](docs/screenshot-en.png)
+
 ---
 
 ## 用法
@@ -92,7 +99,7 @@ Win7 缺必要的系统接口，强行打包也起不来。另外 Win7 早已停
    > [「防火墙这件事」](#防火墙这件事) 一节 —— 这是本软件唯一需要管理员权限的地方，
    > 值得花两分钟看明白。
 
-2. 左边会显示一串**配对码**，形如 `FFVH-KKR4-GU4B-LXJM`。
+2. 左边会显示一串**配对码**，形如 `K7QM-9XRA-2LFD-T8EW`。
 3. 点「复制配对码」，到另一台点「填写对端配对码」粘进去。
    —— 反过来做也行，两台最终是同一串码就行。
 4. 点「工具 → 重新查找设备」，列表里选中对端。
@@ -323,6 +330,15 @@ pyinstaller -F -w --name LanSplice \
 ---
 
 ## 更新记录
+
+**v1.3.3** — 英文界面按钮不再被截断
+- 英文比中文长，几个按钮（Choose files… / Choose folder… / Remove）写死了字符宽度，
+  显示出来被截成 `move select`、`Choose folder.` 这样。改成按文字自然宽度撑开
+- 「Remove selected」收短为「Remove」，队列标题行的英文提示同步收短，右侧不再挤在一起
+- 顺带修两处只在开发者这边出现的问题：`PeerServer._handle` 与 Python 3.13 里
+  `Thread._handle` 同名，会被覆盖成线程句柄，源码版在 3.13 下收到连接就崩；
+  打包脚本现在显式带上 OpenSSL 的两个 DLL，`--clean` 重建也不会漏
+- 新增中英文界面截图、开发历程文档
 
 **v1.3.2** — 修「一键放行」弹出的那行红字
 - 现象：点「一键放行防火墙」后，会弹出一行
