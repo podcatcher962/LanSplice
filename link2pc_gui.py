@@ -1346,7 +1346,7 @@ class App:
         win.transient(self.root)
 
         # 先占底部按钮栏，再放正文 —— 否则 expand 的 Text 会把按钮挤出去，
-        # 只剩半截露在窗口边沿（v1.2.2 在阳台机上的样子）。
+        # 只剩半截露在窗口边沿（v1.2.2 在小屏机器上的样子）。
         bar = tk.Frame(win, bg=C_BG)
         bar.pack(side="bottom", fill="x", pady=8)
         btn_box = tk.Frame(bar, bg=C_BG)
