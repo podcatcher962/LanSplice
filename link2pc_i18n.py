@@ -910,7 +910,11 @@ S = {
         '· 发文字：Ctrl+Shift+V 把本机剪贴板直接推到对端，对端点一下就能粘贴。\n'
         '· 手机传文件：文件 → 手机传文件，手机扫二维码用浏览器收发，手机不用装任何东西。\n'
         '· 关窗口只是缩到托盘，接收不中断；托盘右键可开关「开机自动启动」。\n'
-        '· 设置 → 传完再校验文件：慢一些，但能查出读盘、写盘层面的错误。',
+        '· 设置 → 传完再校验文件：慢一些，但能查出读盘、写盘层面的错误。\n\n'
+        '—— 1.5 新增 ——\n'
+        '· 文件夹镜像：工具 → 镜像文件夹…，选一对目录，只补新增和改过的文件，适合长期同步。\n'
+        '· 命令行：LanSplice.exe send <路径> --to <IP> 可以写进批处理和计划任务；\n'
+        '  另有 devices（扫局域网）和 version。不带任何参数仍然是图形界面。',
         "① Open the app on both machines; the pairing code shows on the left.\n② Make the two codes match:\n   click 'Copy code', then on the other machine click 'Enter peer code' and paste.\n③ Tools → Find devices again, select the peer.\n④ Drag files or folders into the dashed box (or use 'Choose files/folder').\n⑤ Click '① Send to peer'.\n\nFiles land in the peer's receive folder (default E:\\_xfer) with the folder structure intact.\nFiles with the same name and size are skipped, never re-sent.\n\nIf the peer can't find this machine the first time, click Security → Allow in firewall once.\n\n"
         "—— New in 1.4 ——\n"
         "· Resume: if a transfer breaks, press Send again and it continues from where it stopped.\n"
@@ -918,7 +922,11 @@ S = {
         "· Send text: Ctrl+Shift+V pushes the local clipboard to the peer.\n"
         "· Phone transfer: File → Phone transfer, scan the QR code with a phone browser.\n"
         "· Closing the window only minimises to the tray; receiving keeps running.\n"
-        "· Settings → verify after transfer: slower, but catches disk-level errors.",
+        "· Settings → verify after transfer: slower, but catches disk-level errors.\n\n"
+        "—— New in 1.5 ——\n"
+        "· Folder mirror: Tools → Mirror a folder…; pick a pair of folders and only new or changed files are copied.\n"
+        "· Command line: LanSplice.exe send <path> --to <IP> for batch files and scheduled tasks;\n"
+        "  plus devices (scan the LAN) and version. No arguments still opens the GUI.",
     ),
     "g225": (
         '本软件用于同一局域网内的两台自有设备之间传输文件。\n\n· 请勿用于传输违法内容。\n· 请妥善保管配对码，配对码泄露等于把接收目录对外开放。\n· 对端发来的可执行文件请自行判断风险，本软件不做病毒扫描。\n· 作者不对使用本软件造成的任何数据损失或法律后果负责。',
@@ -1466,6 +1474,115 @@ S = {
     "g369": (
         '手机扫这个码',
         'Scan this with your phone',
+    ),
+    # ---- v1.5 文件夹镜像
+    "g370": (
+        '镜像文件夹…',
+        'Mirror a folder…',
+    ),
+    "g371": (
+        '把本机一个文件夹同步到对端的接收目录：只传新增和改动过的文件，\n'
+        '对端已有的文件不会被删除，只是补齐和更新。',
+        'Sync a local folder into the peer\'s receive folder. Only new and '
+        'changed files are sent; nothing on the peer is ever deleted.',
+    ),
+    "g372": (
+        '源文件夹',
+        'Source folder',
+    ),
+    "g373": (
+        '对端放到',
+        'On the peer, under',
+    ),
+    "g374": (
+        '开始同步',
+        'Start',
+    ),
+    "g375": (
+        '正在扫描…',
+        'Scanning…',
+    ),
+    "g376": (
+        '第 %d / %d 个：%s',
+        'File %d of %d: %s',
+    ),
+    "g377": (
+        '同步完成：更新 %d 个，跳过 %d 个，共 %s',
+        'Done: %d updated, %d skipped, %s total',
+    ),
+    "g378": (
+        '请先选一个源文件夹',
+        'Choose a source folder first',
+    ),
+    "g379": (
+        '对端已经是最新的，没有需要同步的文件',
+        'The peer is already up to date',
+    ),
+    "g380": (
+        '（对端接收目录的根）',
+        '(the receive folder root)',
+    ),
+    "g381": (
+        '正在核对 %d / %d 个文件…',
+        'Checking file %d of %d…',
+    ),
+    "g382": (
+        '核对完 %d 个文件：要传 %d 个（%s），另外 %d 个没变',
+        'Checked %d files: %d to send (%s), %d unchanged',
+    ),
+    # ---- v1.5 命令行
+    "cli01": (
+        '没有找到配对码。请先打开一次图形界面，让它生成本机配对码。',
+        'No pairing code found. Run the GUI once so it can generate one.',
+    ),
+    "cli02": (
+        '地址格式不对：%s（应形如 192.168.1.20 或 192.168.1.20:47820）',
+        'Bad address: %s (expected 192.168.1.20 or 192.168.1.20:47820)',
+    ),
+    "cli03": (
+        '没有找到可发送的文件',
+        'Nothing to send',
+    ),
+    "cli04": (
+        '准备发送 %d 个文件，共 %s → %s:%d',
+        'Sending %d file(s), %s total → %s:%d',
+    ),
+    "cli05": (
+        '配对码不对，对端拒绝了这次连接',
+        'Wrong pairing code — the peer refused the connection',
+    ),
+    "cli06": (
+        '连不上对端：%s',
+        'Cannot reach the peer: %s',
+    ),
+    "cli07": (
+        '  已跳过（对端已有同大小同时间的文件）',
+        '  skipped (same size and mtime already on the peer)',
+    ),
+    "cli08": (
+        '  对端有同名文件，存成了 %s',
+        '  saved as %s (name already taken on the peer)',
+    ),
+    "cli09": (
+        '  失败：%s',
+        '  failed: %s',
+    ),
+    "cli10": (
+        '完成：成功 %d，跳过 %d，失败 %d，用时 %.1f 秒，平均 %.1f MB/s',
+        'Done: %d sent, %d skipped, %d failed, %.1f s, %.1f MB/s average',
+    ),
+    "cli11": (
+        '正在扫描局域网（约 2 秒）…',
+        'Scanning the LAN (~2 s)…',
+    ),
+    "cli12": (
+        '没找到设备。检查两台是否在同一个路由器下、对端是否开着接收。',
+        'No devices found. Check that both are on the same router and the '
+        'peer is receiving.',
+    ),
+    "cli13": (
+        '共找到 %d 台',
+        '%d device(s) found',
     ),
 }
 
