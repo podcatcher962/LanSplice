@@ -304,7 +304,7 @@ S = {
     ),
     "g074": (
         '接收端口 %d\n对端发来的文件存到上面的目录',
-        'Receive port %d\nIncoming files are saved to the folder above',
+        'Receive port %d\nFiles land in the folder above',
     ),
     "g075": (
         '%d 项 · %d 个文件 · %s',
@@ -914,7 +914,9 @@ S = {
         '—— 1.5 新增 ——\n'
         '· 文件夹镜像：工具 → 镜像文件夹…，选一对目录，只补新增和改过的文件，适合长期同步。\n'
         '· 命令行：LanSplice.exe send <路径> --to <IP> 可以写进批处理和计划任务；\n'
-        '  另有 devices（扫局域网）和 version。不带任何参数仍然是图形界面。',
+        '  另有 devices（扫局域网）和 version。不带任何参数仍然是图形界面。\n'
+        '  退出码 0 = 全成，1 = 有文件没传成（可以重跑，断点会接上），2 = 没开始。\n'
+        '  连不上时会说清是「对端没开」还是「不在同一个路由器下」，不再只说 timed out。',
         "① Open the app on both machines; the pairing code shows on the left.\n② Make the two codes match:\n   click 'Copy code', then on the other machine click 'Enter peer code' and paste.\n③ Tools → Find devices again, select the peer.\n④ Drag files or folders into the dashed box (or use 'Choose files/folder').\n⑤ Click '① Send to peer'.\n\nFiles land in the peer's receive folder (default E:\\_xfer) with the folder structure intact.\nFiles with the same name and size are skipped, never re-sent.\n\nIf the peer can't find this machine the first time, click Security → Allow in firewall once.\n\n"
         "—— New in 1.4 ——\n"
         "· Resume: if a transfer breaks, press Send again and it continues from where it stopped.\n"
@@ -926,7 +928,10 @@ S = {
         "—— New in 1.5 ——\n"
         "· Folder mirror: Tools → Mirror a folder…; pick a pair of folders and only new or changed files are copied.\n"
         "· Command line: LanSplice.exe send <path> --to <IP> for batch files and scheduled tasks;\n"
-        "  plus devices (scan the LAN) and version. No arguments still opens the GUI.",
+        "  plus devices (scan the LAN) and version. No arguments still opens the GUI.\n"
+        "  Exit codes: 0 = all done, 1 = some files failed (safe to rerun, resume picks up), 2 = never started.\n"
+        "  A failed connection says whether the peer is closed or just not on the same router,\n"
+        "  instead of only 'timed out'.",
     ),
     "g225": (
         '本软件用于同一局域网内的两台自有设备之间传输文件。\n\n· 请勿用于传输违法内容。\n· 请妥善保管配对码，配对码泄露等于把接收目录对外开放。\n· 对端发来的可执行文件请自行判断风险，本软件不做病毒扫描。\n· 作者不对使用本软件造成的任何数据损失或法律后果负责。',
@@ -1259,6 +1264,24 @@ S = {
         '已续传 %s，前面 %s 是上次传的',
         'Resumed at %s, the first %s came from the previous attempt',
     ),
+    # ---- v1.5.1 连不上时说什么
+    "c069": (
+        '连不上 %s:%s —— 这个地址上没有程序在听。对端多半没开 LanSplice，'
+        '或者填的不是它现在的地址',
+        'Cannot reach %s:%s — nothing is listening there. The other machine most '
+        'likely has LanSplice closed, or this is not its current address',
+    ),
+    "c070": (
+        '%s:%s 一声不响 —— 两台可能不在同一个路由器下，或者对端被防火墙挡住了。'
+        '确认两台连的是同一个 WiFi / 路由器，再试一次',
+        '%s:%s gave no answer — the two machines may not be on the same router, or '
+        'the peer is blocked by its firewall. Check that both use the same Wi-Fi or '
+        'router, then try again',
+    ),
+    "c071": (
+        '连不上 %s:%s —— %s',
+        'Cannot reach %s:%s — %s',
+    ),
     # ---- v1.4 托盘 / 常驻
     "g300": (
         '显示主窗口',
@@ -1532,8 +1555,10 @@ S = {
     ),
     # ---- v1.5 命令行
     "cli01": (
-        '没有找到配对码。请先打开一次图形界面，让它生成本机配对码。',
-        'No pairing code found. Run the GUI once so it can generate one.',
+        '没有找到配对码。两种办法：打开一次图形界面让它生成，'
+        '或者直接加 --code XXXX-XXXX-XXXX-XXXX（要和对面那台上显示的一致）。',
+        'No pairing code found. Either run the GUI once so it can generate one, '
+        'or pass --code XXXX-XXXX-XXXX-XXXX (it must match what the other machine shows).',
     ),
     "cli02": (
         '地址格式不对：%s（应形如 192.168.1.20 或 192.168.1.20:47820）',
