@@ -1,0 +1,2175 @@
+# -*- coding: utf-8 -*-
+"""
+LanSplice 图形界面
+================
+双机局域网直传 · 加密通道 · 不依赖 Windows 共享
+"""
+
+import os
+import sys
+import json
+import time
+import socket
+import queue
+import base64
+import ctypes
+import threading
+import subprocess
+from ctypes import wintypes
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, simpledialog
+
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    HAS_DND = True
+except Exception:
+    TkinterDnD = None
+    DND_FILES = None
+    HAS_DND = False
+
+import link2pc_core as L
+import link2pc_i18n as I18N
+from link2pc_i18n import t as _t
+
+APP_NAME = "LanSplice"
+APP_TITLE = "LanSplice · 双机直传"
+APP_VER = "1.3.2"
+COPYRIGHT = "© 永远的兰兰"
+
+# ---------------------------------------------------------------- 配色
+
+C_BG = "#eceff1"          # 窗口底色
+C_PANEL = "#dfe3e6"       # 侧栏 / 顶栏
+C_CARD = "#f4f6f7"        # 卡片
+C_LINE = "#c7cfd4"        # 分隔线
+C_TEXT = "#1f2a30"        # 主文字
+C_SUB = "#5f7079"         # 次要文字
+C_BLUE = "#1976d2"
+C_GREEN = "#2e7d32"
+C_PURPLE = "#6a1b9a"
+C_RED = "#c62828"
+C_GRAY = "#90a4ae"
+C_WHITE = "#ffffff"
+
+FONT = "Microsoft YaHei UI"
+
+# ---------------------------------------------------------------- 剪贴板里的文件
+
+CF_HDROP = 15          # 资源管理器「复制文件」用的剪贴板格式
+
+
+def clipboard_file_paths():
+    """
+    取剪贴板里被复制的**文件/文件夹**路径（Windows CF_HDROP）。
+    复制的是普通文字时返回空列表 —— 调用方据此判断要不要接管这次粘贴。
+    """
+    if os.name != "nt":
+        return []
+    try:
+        u = ctypes.windll.user32
+        s = ctypes.windll.shell32
+        u.OpenClipboard.argtypes = [wintypes.HWND]
+        u.OpenClipboard.restype = wintypes.BOOL
+        u.GetClipboardData.argtypes = [wintypes.UINT]
+        u.GetClipboardData.restype = wintypes.HANDLE
+        u.CloseClipboard.restype = wintypes.BOOL
+        s.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT,
+                                     wintypes.LPWSTR, wintypes.UINT]
+        s.DragQueryFileW.restype = wintypes.UINT
+    except Exception:
+        return []
+
+    opened = False
+    for _ in range(6):                     # 剪贴板可能被别的程序占着一瞬间
+        if u.OpenClipboard(None):
+            opened = True
+            break
+        time.sleep(0.03)
+    if not opened:
+        return []
+
+    out = []
+    try:
+        h = u.GetClipboardData(CF_HDROP)
+        if not h:
+            return out
+        n = s.DragQueryFileW(h, 0xFFFFFFFF, None, 0)
+        if not n or n > 4096:
+            return out
+        buf = ctypes.create_unicode_buffer(32768)
+        for i in range(n):
+            if s.DragQueryFileW(h, i, buf, 32768):
+                out.append(buf.value)
+    except Exception:
+        return out
+    finally:
+        try:
+            u.CloseClipboard()
+        except Exception:
+            pass
+    return out
+
+
+def default_lang():
+    """默认跟系统走：中文 Windows 用中文，其他用英文。"""
+    try:
+        import ctypes
+        langid = ctypes.windll.kernel32.GetSystemDefaultUILanguage()
+        return "zh" if (langid & 0x3FF) == 0x04 else "en"
+    except Exception:
+        return "zh"
+
+
+def cfg_path():
+    """
+    配置放在 %APPDATA%\\LanSplice\\config.json。
+    名字从 Link2PC 改过来，第一次跑新版时把旧目录的配置搬过来 ——
+    配对码、对端地址、接收目录都别让用户重填。
+    """
+    appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+    base = os.path.join(appdata, APP_NAME)
+    new = os.path.join(base, "config.json")
+    old = os.path.join(appdata, "Link2PC", "config.json")
+    if not os.path.isfile(new) and os.path.isfile(old):
+        try:
+            os.makedirs(base, exist_ok=True)
+            with open(old, "rb") as f:
+                blob = f.read()
+            with open(new, "wb") as f:
+                f.write(blob)
+        except Exception:
+            pass
+    os.makedirs(base, exist_ok=True)
+    return new
+
+
+def load_cfg():
+    p = cfg_path()
+    d = {}
+    if os.path.isfile(p):
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+        except Exception:
+            d = {}
+    if not d.get("pair_key"):
+        d["pair_key"] = base64.b64encode(L.new_pair_key()).decode()
+    if not d.get("recv_root"):
+        cand = "E:\\_xfer"
+        d["recv_root"] = cand if os.path.isdir(os.path.dirname(cand) or "E:\\") else \
+            os.path.join(os.path.expanduser("~"), _t("g003"))
+    d.setdefault("tcp_port", L.TCP_PORT)
+    d.setdefault("peer_ip", "")
+    d.setdefault("peer_port", L.TCP_PORT)
+    d.setdefault("discovery", True)
+    d.setdefault("auto_server", True)
+    save_cfg(d)
+    return d
+
+
+def save_cfg(d):
+    try:
+        json.dump(d, open(cfg_path(), "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def fmt_speed(bps):
+    if not bps or bps <= 0:
+        return ""
+    if bps < 1024 * 1024:
+        return "%.0f KB/s" % (bps / 1024.0)
+    return "%.1f MB/s" % (bps / 1048576.0)
+
+
+def fmt_eta(done, total, bps):
+    if bps <= 0 or total <= 0:
+        return ""
+    left = (total - done) / bps
+    if left < 1:
+        return _t("g004")
+    if left < 60:
+        return _t("g005") % left
+    if left < 3600:
+        return _t("g006") % (left // 60, left % 60)
+    return _t("g007") % (left // 3600)
+
+
+# ---------------------------------------------------------------- 主窗口
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.cfg = load_cfg()
+        I18N.set_lang(self.cfg.get("lang") or default_lang())
+        try:
+            self.key = base64.b64decode(self.cfg["pair_key"])
+        except Exception:
+            self.key = L.new_pair_key()
+
+        self.peer_ip = self.cfg.get("peer_ip") or ""
+        self.peer_port = int(self.cfg.get("peer_port") or L.TCP_PORT)
+        self.peer_name = ""
+
+        self.queue_paths = []           # 待发送的顶层路径
+        self.rows = {}                  # path -> treeview item id
+        self.events = queue.Queue()
+        self.sending = False
+        self.cancel_flag = threading.Event()
+        self.server = None
+
+        self._found = []                # 设备列表第 N 行对应的数据
+        self._seen = set()              # 已出现过的 (ip, port)，防重复插入
+
+        self.peer_root = ""             # 对端接收目录（发送时握手取回）
+        self.rel_rows = {}              # 发送用的相对路径 -> 清单行
+        self.item_total = {}            # 清单行 -> 该行总字节
+        self.item_done = {}             # 清单行 -> 已完成字节
+        self.item_rels = {}             # 清单行 -> [相对路径...]
+        self.item_ok = {}               # 清单行 -> 已完成的相对路径集合
+        self.item_files_total = {}      # 清单行 -> 文件总数
+        self.item_files_done = {}       # 清单行 -> 已完成文件数
+        self._send_t0 = 0.0
+        self.last_result = None         # 上一次传输的结果，供「详情」查看
+        self.total_bytes = 0            # 本次总字节（进度条用）
+        self.done_bytes = 0             # 本次已完成字节
+        self.last_ui = 0.0              # 进度刷新节流时间戳
+
+        self._build_ui()
+        self._start_server()
+        self._pump()
+        self.root.after(400, self.scan_peers)
+        self.root.after(600, self._refresh_fw_status)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    # ------------------------------------------------------------ 界面
+
+    def _build_ui(self):
+        r = self.root
+        r.title("%s  v%s" % (_t("g001"), APP_VER))
+        r.geometry("900x640")
+        r.minsize(820, 580)
+        r.configure(bg=C_BG)
+
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure("TFrame", background=C_BG)
+        style.configure("Panel.TFrame", background=C_PANEL)
+        style.configure("Card.TFrame", background=C_CARD, relief="flat")
+        style.configure("TLabel", background=C_BG, foreground=C_TEXT, font=(FONT, 9))
+        style.configure("Sub.TLabel", background=C_BG, foreground=C_SUB, font=(FONT, 8))
+        style.configure("H1.TLabel", background=C_PANEL, foreground=C_TEXT,
+                        font=(FONT, 12, "bold"))
+        style.configure("Card.TLabel", background=C_CARD, foreground=C_TEXT, font=(FONT, 9))
+        style.configure("Drop.TLabel", background=C_CARD, foreground=C_SUB, font=(FONT, 11))
+        style.configure("DropBig.TLabel", background=C_CARD, foreground=C_BLUE,
+                        font=(FONT, 15, "bold"))
+
+        style.configure("Treeview", background=C_CARD, fieldbackground=C_CARD,
+                        foreground=C_TEXT, rowheight=24, font=(FONT, 9),
+                        borderwidth=0)
+        style.configure("Treeview.Heading", background=C_PANEL, foreground=C_TEXT,
+                        font=(FONT, 9, "bold"), relief="flat")
+        style.map("Treeview", background=[("selected", "#bbdefb")],
+                  foreground=[("selected", C_TEXT)])
+        style.map("Treeview.Heading", background=[("active", "#cfd8dc")])
+        style.configure("TProgressbar", background=C_BLUE, troughcolor="#d3dade",
+                        borderwidth=0, thickness=14)
+        style.configure("TEntry", fieldbackground="#ffffff", font=(FONT, 9))
+
+        # ---- 菜单
+        m = tk.Menu(r, font=(FONT, 9))
+        r.config(menu=m)
+
+        fm = tk.Menu(m, tearoff=0, font=(FONT, 9))
+        fm.add_command(label=_t("g008"), command=self.pick_files, accelerator="Ctrl+O")
+        fm.add_command(label=_t("g009"), command=self.pick_folder, accelerator="Ctrl+Shift+O")
+        fm.add_separator()
+        fm.add_command(label=_t("g010"), command=self.start_send)
+        fm.add_command(label=_t("g011"), command=self.pull_dialog)
+        fm.add_separator()
+        fm.add_command(label=_t("g012"), command=self.show_result_detail)
+        fm.add_separator()
+        fm.add_command(label=_t("g013"), command=self.on_close)
+        m.add_cascade(label=_t("g014"), menu=fm)
+
+        tm = tk.Menu(m, tearoff=0, font=(FONT, 9))
+        tm.add_command(label=_t("g015"), command=self.scan_peers, accelerator="F5")
+        tm.add_command(label=_t("g016"), command=self.manual_peer)
+        tm.add_command(label=_t("g017"), command=self.net_info)
+        tm.add_command(label=_t("g018"), command=self.diagnose)
+        tm.add_separator()
+        tm.add_command(label=_t("g019"), command=self.open_recv_root)
+        tm.add_command(label=_t("g020"), command=self.clear_queue)
+        tm.add_separator()
+        tm.add_command(label=_t("g021"), command=self.toggle_server)
+        m.add_cascade(label=_t("g022"), menu=tm)
+
+        sm = tk.Menu(m, tearoff=0, font=(FONT, 9))
+        sm.add_command(label=_t("g023"), command=self.show_code)
+        sm.add_command(label=_t("g024"), command=self.enter_code)
+        sm.add_command(label=_t("g025"), command=self.regen_code)
+        sm.add_separator()
+        sm.add_command(label=_t("g026"), command=self.set_recv_root)
+        sm.add_command(label=_t("g027"), command=self.fw_dialog)
+        sm.add_command(label=_t("g028"), command=self.security_check)
+        m.add_cascade(label=_t("g029"), menu=sm)
+
+        hm = tk.Menu(m, tearoff=0, font=(FONT, 9))
+        hm.add_command(label=_t("g030"), command=self.show_help)
+        hm.add_command(label=_t("g031"), command=self.show_disclaimer)
+        hm.add_separator()
+        hm.add_command(label=_t("g032"), command=self.show_about)
+        m.add_cascade(label=_t("g033"), menu=hm)
+
+        r.bind("<Control-o>", lambda e: self.pick_files())
+        r.bind("<Control-O>", lambda e: self.pick_folder())
+        r.bind("<Control-v>", self.on_paste)
+        r.bind("<Control-V>", self.on_paste)
+        r.bind("<F5>", lambda e: self.scan_peers())
+
+        # ---- 顶栏：状态
+        top = tk.Frame(r, bg=C_PANEL, height=62)
+        top.pack(fill="x")
+        top.pack_propagate(False)
+
+        self.lamp_self = tk.Label(top, text="●", bg=C_PANEL, fg=C_GRAY, font=(FONT, 13))
+        self.lamp_self.pack(side="left", padx=(14, 4), pady=10)
+        self.lbl_self = tk.Label(top, text=_t("g034"), bg=C_PANEL, fg=C_TEXT,
+                                 font=(FONT, 10, "bold"), anchor="w")
+        self.lbl_self.pack(side="left")
+        self.lbl_self_sub = tk.Label(top, text="", bg=C_PANEL, fg=C_SUB, font=(FONT, 8),
+                                     anchor="w")
+        self.lbl_self_sub.pack(side="left", padx=(8, 0))
+
+        sep = tk.Frame(top, bg=C_LINE, width=1)
+        sep.pack(side="left", fill="y", padx=14, pady=12)
+
+        self.lamp_peer = tk.Label(top, text="●", bg=C_PANEL, fg=C_RED, font=(FONT, 13))
+        self.lamp_peer.pack(side="left", padx=(0, 4))
+        self.lbl_peer = tk.Label(top, text=_t("g035"), bg=C_PANEL, fg=C_TEXT,
+                                 font=(FONT, 10, "bold"), anchor="w")
+        self.lbl_peer.pack(side="left")
+        self.lbl_peer_sub = tk.Label(top, text=_t("g036"), bg=C_PANEL,
+                                     fg=C_SUB, font=(FONT, 8), anchor="w")
+        self.lbl_peer_sub.pack(side="left", padx=(8, 0))
+
+        self.lbl_sec = tk.Label(top, text="", bg=C_PANEL, fg=C_GREEN, font=(FONT, 8, "bold"))
+        self.lbl_sec.pack(side="right", padx=(8, 14))
+
+        # 语言切换：两个小键，当前语言高亮。放首页顶栏右侧，一眼能找到。
+        self.lang_box = tk.Frame(top, bg=C_PANEL)
+        self.lang_box.pack(side="right", pady=10)
+        for _code, _text in (("zh", "中文"), ("en", "EN")):
+            _cur = (I18N.get_lang() == _code)
+            tk.Button(
+                self.lang_box, text=_text,
+                command=lambda c=_code: self.set_language(c),
+                bg=C_BLUE if _cur else "#cfd8dc",
+                fg=C_WHITE if _cur else C_TEXT,
+                font=(FONT, 8) + (("bold",) if _cur else ()),
+                relief="flat", cursor="hand2", padx=7, pady=1,
+                activebackground=C_BLUE, activeforeground=C_WHITE,
+                bd=0, highlightthickness=0,
+            ).pack(side="left", padx=(0, 2))
+
+        # ---- 快捷设置条：接收目录 + 防火墙（这两个是上手最关键的两步，直接摆在首页）
+        qb = tk.Frame(r, bg="#e2e8ec", height=56)
+        qb.pack(fill="x")
+        qb.pack_propagate(False)
+        tk.Frame(r, bg=C_LINE, height=1).pack(fill="x")
+
+        tk.Label(qb, text=_t("g037"), bg="#e2e8ec", fg=C_TEXT,
+                 font=(FONT, 9, "bold")).pack(side="left", padx=(14, 8), pady=14)
+        self.lbl_recv = tk.Label(qb, text="", bg="#e2e8ec", fg=C_BLUE,
+                                 font=(FONT, 10, "bold"), anchor="w")
+        self.lbl_recv.pack(side="left")
+        self.lbl_recv_port = tk.Label(qb, text="", bg="#e2e8ec", fg=C_SUB,
+                                      font=(FONT, 8), anchor="w")
+        self.lbl_recv_port.pack(side="left", padx=(8, 10))
+        self._mk_btn(qb, _t("g038"), self.set_recv_root, C_BLUE, width=7).pack(side="left", padx=(0, 4))
+        self._mk_btn(qb, _t("g039"), self.open_recv_root, "#607d8b", width=6).pack(side="left")
+
+        self.btn_fw = self._mk_btn(qb, _t("g040"), self.fw_dialog, "#e65100", width=14)
+        self.btn_fw.pack(side="right", padx=(6, 14))
+        self.lbl_fw = tk.Label(qb, text=_t("g041"), bg="#e2e8ec", fg=C_SUB,
+                               font=(FONT, 9, "bold"))
+        self.lbl_fw.pack(side="right", padx=(0, 4))
+        self.lbl_fw.bind("<Button-1>", lambda e: self._refresh_fw_status())
+
+        # ---- 主体：左栏 + 右区
+        body = tk.Frame(r, bg=C_BG)
+        body.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+
+        left = tk.Frame(body, bg=C_PANEL, width=214)
+        left.pack(side="left", fill="y", padx=(0, 8))
+        left.pack_propagate(False)
+
+        tk.Label(left, text=_t("g042"), bg=C_PANEL, fg=C_TEXT, font=(FONT, 9, "bold"),
+                 anchor="w").pack(fill="x", padx=12, pady=(12, 4))
+
+        self.peer_list = tk.Listbox(left, height=5, bg=C_CARD, fg=C_TEXT,
+                                    font=(FONT, 9), relief="flat", activestyle="none",
+                                    selectbackground="#bbdefb", selectforeground=C_TEXT,
+                                    highlightthickness=0, borderwidth=0)
+        self.peer_list.pack(fill="x", padx=12)
+        self.peer_list.bind("<<ListboxSelect>>", self.on_pick_peer)
+
+        self.btn_scan = tk.Button(left, text=_t("g043"), command=self.scan_peers,
+                                  bg="#546e7a", fg=C_WHITE, font=(FONT, 9),
+                                  relief="flat", cursor="hand2", activebackground="#37474f",
+                                  activeforeground=C_WHITE)
+        self.btn_scan.pack(fill="x", padx=12, pady=(6, 12))
+
+        tk.Frame(left, bg=C_LINE, height=1).pack(fill="x", padx=12)
+
+        tk.Label(left, text=_t("g044"), bg=C_PANEL, fg=C_TEXT, font=(FONT, 9, "bold"),
+                 anchor="w").pack(fill="x", padx=12, pady=(12, 2))
+        self.lbl_code = tk.Label(left, text="", bg=C_CARD, fg=C_BLUE,
+                                 font=("Consolas", 10, "bold"), pady=6)
+        self.lbl_code.pack(fill="x", padx=12)
+
+        self.btn_copy = tk.Button(left, text=_t("g045"), command=self.copy_code,
+                                  bg="#546e7a", fg=C_WHITE, font=(FONT, 9),
+                                  relief="flat", cursor="hand2",
+                                  activebackground="#37474f", activeforeground=C_WHITE)
+        self.btn_copy.pack(fill="x", padx=12, pady=(6, 4))
+
+        self.btn_setcode = tk.Button(left, text=_t("g046"), command=self.enter_code,
+                                     bg="#546e7a", fg=C_WHITE, font=(FONT, 9),
+                                     relief="flat", cursor="hand2",
+                                     activebackground="#37474f", activeforeground=C_WHITE)
+        self.btn_setcode.pack(fill="x", padx=12)
+
+        tk.Frame(left, bg=C_LINE, height=1).pack(fill="x", padx=12, pady=12)
+
+        self.lbl_port = tk.Label(left, text="", bg=C_PANEL, fg=C_SUB, font=(FONT, 8),
+                                 anchor="w", justify="left", wraplength=200)
+        self.lbl_port.pack(fill="x", padx=12)
+
+        # ---- 右区
+        right = tk.Frame(body, bg=C_BG)
+        right.pack(side="left", fill="both", expand=True)
+
+        self.drop = tk.Frame(right, bg=C_CARD, height=136,
+                             highlightbackground=C_LINE, highlightthickness=1)
+        self.drop.pack(fill="x")
+        self.drop.pack_propagate(False)
+
+        self.lbl_drop_big = tk.Label(self.drop, text=_t("g047"),
+                                     bg=C_CARD, fg=C_BLUE, font=(FONT, 15, "bold"))
+        self.lbl_drop_big.pack(pady=(22, 2))
+        self.lbl_drop_sub = tk.Label(
+            self.drop,
+            text=(_t("g048")
+                  if HAS_DND else
+                  _t("g049")),
+            bg=C_CARD, fg=C_SUB, font=(FONT, 9))
+        self.lbl_drop_sub.pack()
+
+        btns = tk.Frame(self.drop, bg=C_CARD)
+        btns.pack(pady=(8, 0))
+        self._mk_btn(btns, _t("g050"), self.pick_files, "#607d8b", width=11).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g051"), self.pick_folder, "#607d8b", width=11).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g052"), self.clear_queue, "#90a4ae", width=7).pack(side="left", padx=4)
+
+        if HAS_DND:
+            ok = 0
+            for w in (self.drop, self.lbl_drop_big, self.lbl_drop_sub):
+                try:
+                    w.drop_target_register(DND_FILES)
+                    w.dnd_bind("<<Drop>>", self.on_drop)
+                    ok += 1
+                except Exception:
+                    pass
+            if ok == 0:
+                self.lbl_drop_sub.config(
+                    text=_t("g053"))
+
+        # 队列
+        qhead = tk.Frame(right, bg=C_BG)
+        qhead.pack(fill="x", pady=(10, 4))
+        tk.Label(qhead, text=_t("g054"), bg=C_BG, fg=C_TEXT,
+                 font=(FONT, 9, "bold")).pack(side="left")
+        self.lbl_qsum = tk.Label(qhead, text=_t("g055"), bg=C_BG, fg=C_SUB, font=(FONT, 8))
+        self.lbl_qsum.pack(side="left", padx=10)
+
+        self.btn_clearq = self._mk_btn(qhead, _t("g056"), self.clear_queue,
+                                       "#78909c", width=9)
+        self.btn_clearq.pack(side="right", padx=(4, 0))
+        self.btn_rmsel = self._mk_btn(qhead, _t("g057"), self.remove_selected,
+                                      "#607d8b", width=9)
+        self.btn_rmsel.pack(side="right", padx=(4, 0))
+        tk.Label(qhead, text=_t("g058"), bg=C_BG, fg=C_SUB,
+                 font=(FONT, 8)).pack(side="right", padx=(0, 6))
+
+        cols = ("name", "size", "prog", "speed", "state")
+        self.tree = ttk.Treeview(right, columns=cols, show="headings", height=8)
+        for c, t, w, a in (("name", _t("g014"), 240, "w"),
+                           ("size", _t("g059"), 80, "e"),
+                           ("prog", _t("g060"), 70, "center"),
+                           ("speed", _t("g061"), 90, "e"),
+                           ("state", _t("g062"), 80, "w")):
+            self.tree.heading(c, text=t)
+            self.tree.column(c, width=w, anchor=a, stretch=(c == "name"))
+
+        sb = ttk.Scrollbar(right, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+
+        self.tree.bind("<Double-1>", self.on_tree_double)
+        self.tree.bind("<Delete>", lambda e: self.remove_selected())
+        self.tree.bind("<Button-3>", self.queue_menu)          # 右键菜单
+        self.tree.bind("<Shift-F10>", self.queue_menu)
+        self.qmenu = self._build_queue_menu()
+
+        # ---- 底栏（必须在 body 之前 pack，否则会被 expand 的主体挤扁）
+        bottom = tk.Frame(r, bg=C_PANEL, height=98)
+        bottom.pack(fill="x", side="bottom", before=body)
+        bottom.pack_propagate(False)
+
+        inner = tk.Frame(bottom, bg=C_PANEL)
+        inner.pack(fill="x", padx=14, pady=(10, 6))
+
+        self.btn_send = self._mk_btn(inner, _t("g063"), self.start_send,
+                                     C_BLUE, width=16, big=True)
+        self.btn_send.pack(side="left")
+        self.btn_pull = self._mk_btn(inner, _t("g064"), self.pull_dialog,
+                                     C_GREEN, width=16, big=True)
+        self.btn_pull.pack(side="left", padx=8)
+        self.btn_stop = self._mk_btn(inner, _t("g065"), self.stop_send, C_RED, width=8, big=True)
+        self.btn_stop.pack(side="left")
+        self.btn_stop.config(state="disabled")
+
+        self.btn_detail = self._mk_btn(inner, _t("g066"), self.show_result_detail,
+                                       "#546e7a", width=7, big=True)
+        self.btn_detail.pack(side="right", padx=(10, 0))
+        self.btn_detail.config(state="disabled")
+
+        self.lbl_status = tk.Label(inner, text=_t("g067"), bg=C_PANEL, fg=C_SUB,
+                                   font=(FONT, 9), anchor="e", justify="right")
+        self.lbl_status.pack(side="right")
+
+        self.pbar = ttk.Progressbar(bottom, mode="determinate", maximum=1000)
+        self.pbar.pack(fill="x", padx=14, pady=(2, 10))
+
+        self._refresh_self()
+        self._refresh_code()
+        self._refresh_queue_summary()
+
+    # ------------------------------------------------------------ 语言
+
+    def set_language(self, lang):
+        if lang == I18N.get_lang():
+            return
+        if self.sending:
+            messagebox.showinfo(APP_NAME, _t("g248"))
+            return
+        self.cfg["lang"] = lang
+        save_cfg(self.cfg)
+        I18N.set_lang(lang)
+        self._rebuild_ui()
+
+    def _rebuild_ui(self):
+        """
+        切换语言时整块重建控件。逐个改 text 一定会漏（菜单、表头、右键菜单、
+        Treeview 列标题），重建最省心；清单、设备列表、对端选择在重建后原样恢复。
+        """
+        rows = []
+        for p in self.queue_paths:
+            iid = self.rows.get(p)
+            if iid:
+                rows.append((p, self.tree.item(iid, "values")))
+        found = [dict(f) for f in self._found]
+        peer = (self.peer_ip, self.peer_port, self.peer_name)
+
+        for w in self.root.winfo_children():
+            w.destroy()
+        self.rows = {}
+        self._build_ui()
+
+        self._found = found
+        self._seen = set((f["ip"], int(f.get("port") or L.TCP_PORT))
+                         for f in found)
+        for f in found:
+            self.peer_list.insert(
+                "end", "  %s  %s:%d" % (f.get("name", "?"), f["ip"],
+                                        int(f.get("port") or L.TCP_PORT)))
+        if peer[0]:
+            for i, f in enumerate(found):
+                if f["ip"] == peer[0]:
+                    self.peer_list.selection_set(i)
+                    break
+            self.set_peer(peer[0], int(peer[1] or L.TCP_PORT), peer[2])
+        for p, vals in rows:
+            self.rows[p] = self.tree.insert("", "end", values=vals)
+        self._refresh_queue_summary()
+        self.lbl_status.config(text=_t("g067"))
+        self._refresh_fw_status()
+
+    def _mk_btn(self, parent, text, cmd, color, width=12, big=False):
+        # width=None 时按文字自然宽度撑开 —— 中文按钮写死字符宽度会被截断
+        extra = {} if not width else {"width": width}
+        b = tk.Button(parent, text=text, command=cmd, bg=color, fg=C_WHITE,
+                      font=(FONT, 10 if big else 9) + (("bold",) if big else ()),
+                      relief="flat", cursor="hand2",
+                      pady=7 if big else 5,
+                      activebackground=color, activeforeground=C_WHITE,
+                      disabledforeground="#cfd8dc", **extra)
+        b.bind("<Enter>", lambda e, w=b, c=color: w.config(bg=self._darken(c)) if str(w["state"]) != "disabled" else None)
+        b.bind("<Leave>", lambda e, w=b, c=color: w.config(bg=c) if str(w["state"]) != "disabled" else None)
+        return b
+
+    @staticmethod
+    def _darken(hexcolor, f=0.86):
+        h = hexcolor.lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return "#%02x%02x%02x" % (int(r * f), int(g * f), int(b * f))
+
+    # ------------------------------------------------------------ 状态刷新
+
+    def _refresh_self(self):
+        ips = L.local_ips()
+        self.lbl_self.config(text=_t("g068") % L.hostname())
+        if not ips:
+            sub = _t("g069")
+        elif len(ips) == 1:
+            sub = ips[0]
+        else:
+            sub = _t("g070") % (ips[0], len(ips))
+        self.lbl_self_sub.config(text=sub)
+        on = self.server is not None and self.server.running
+        self.lamp_self.config(fg=C_GREEN if on else C_GRAY)
+        self.lbl_sec.config(
+            text=_t("g071") if on else _t("g072"),
+            fg=C_GREEN if on else C_GRAY)
+        root_dir = self.cfg["recv_root"]
+        # 路径太长会把右边的「一键放行」挤出去，中间省略只留结尾
+        if len(root_dir) > 34:
+            root_dir = "…" + root_dir[-30:]
+        self.lbl_recv.config(text=root_dir)
+        self.lbl_recv_port.config(text=_t("g073") % int(self.cfg["tcp_port"]))
+        self.lbl_port.config(text=_t("g074") % int(self.cfg["tcp_port"]))
+
+    def _refresh_code(self):
+        self.lbl_code.config(text=L.key_to_code(self.key))
+
+    def _refresh_queue_summary(self):
+        if not self.queue_paths:
+            self.lbl_qsum.config(text=_t("g055"))
+            return
+        n = 0
+        sz = 0
+        for p in self.queue_paths:
+            if os.path.isfile(p):
+                n += 1
+                try:
+                    sz += os.path.getsize(p)
+                except Exception:
+                    pass
+            elif os.path.isdir(p):
+                for root, dirs, files in os.walk(p):
+                    for f in files:
+                        try:
+                            sz += os.path.getsize(os.path.join(root, f))
+                            n += 1
+                        except Exception:
+                            pass
+        self.lbl_qsum.config(text=_t("g075") % (
+            len(self.queue_paths), n, L.human_size(sz)))
+
+    def set_peer(self, ip, port, name=""):
+        self.peer_ip = ip
+        self.peer_port = port
+        self.peer_name = name or ip
+        self.lbl_peer.config(text=_t("g076") % self.peer_name)
+        self.lbl_peer_sub.config(text="%s:%d" % (ip, port))
+        self.lamp_peer.config(fg=C_GREEN)
+        self.cfg["peer_ip"] = ip
+        self.cfg["peer_port"] = port
+        save_cfg(self.cfg)
+
+    def clear_peer(self):
+        self.lamp_peer.config(fg=C_RED)
+        self.lbl_peer.config(text=_t("g077"))
+        self.lbl_peer_sub.config(text=_t("g036"))
+
+    # ------------------------------------------------------------ 设备发现
+
+    def scan_peers(self):
+        self.btn_scan.config(text=_t("g078"), state="disabled")
+        self.peer_list.delete(0, "end")
+
+        def work():
+            try:
+                found = L.discover(timeout=1.6)
+            except Exception:
+                found = []
+            self.events.put(("peers", found))
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_peers(self, found):
+        self.btn_scan.config(text=_t("g043"), state="normal")
+        me = set(L.local_ips())
+        # 回环 / 本机网卡地址都算自己（广播副本会带着 127.0.0.1 回来）
+        shown = [f for f in found if not L.is_own_addr(f.get("ip"), me)]
+        # 同一台机器可能从多个地址应答（有线+无线、虚拟网卡），按主机名只留一条
+        uniq, names = [], set()
+        for f in shown:
+            n = (f.get("name") or "?").lower()
+            if n in names:
+                continue
+            names.add(n)
+            uniq.append(f)
+        shown = uniq
+        self._found = shown
+        self._seen = set((f.get("ip"), int(f.get("port") or L.TCP_PORT))
+                         for f in shown)
+        if not shown:
+            self.peer_list.insert("end", _t("g079"))
+            self.clear_peer()
+            self.lbl_status.config(
+                text=_t("g080") % len(me))
+            return
+        for f in shown:
+            self.peer_list.insert(
+                "end", "  %s  %s:%d" % (f.get("name", "?"), f.get("ip"),
+                                        int(f.get("port") or L.TCP_PORT)))
+        self.peer_list.selection_set(0)
+        self.on_pick_peer(None)
+        self.lbl_status.config(text=_t("g081") % len(shown))
+
+    def on_peer_seen(self, d):
+        """
+        对端主动通告了自己：它刚打开，或者每 8 秒的例行宣告。
+        自动加进列表并选中，不用再点「重新查找」。
+        """
+        ip = d.get("ip")
+        port = int(d.get("port") or L.TCP_PORT)
+        name = d.get("name") or "?"
+        if L.is_own_addr(ip):
+            return
+
+        # 同一台机器的多个地址只保留一条（否则列表里会出现两台同名设备）
+        low = name.lower()
+        for i, f in enumerate(self._found):
+            if (f.get("name") or "").lower() == low:
+                if f.get("ip") != ip or int(f.get("port") or 0) != port:
+                    # 注意：Listbox 的 delete 会把选中状态一起清掉，
+                    # 必须先记住，再恢复，否则对端地址更新了但 peer 还是旧的
+                    was_sel = (i in self.peer_list.curselection())
+                    f["ip"] = ip
+                    f["port"] = port
+                    self.peer_list.delete(i)
+                    self.peer_list.insert(i, "  %s  %s:%d" % (name, ip, port))
+                    if was_sel:
+                        self.peer_list.selection_clear(0, "end")
+                        self.peer_list.selection_set(i)
+                        self.on_pick_peer(None)
+                return
+
+        key = (ip, port)
+        if key in self._seen:
+            return
+        self._seen.add(key)
+
+        # 清掉"没找到"那行占位文字
+        for i, txt in enumerate(self.peer_list.get(0, "end")):
+            if txt.startswith(_t("g082")):
+                self.peer_list.delete(i)
+                break
+
+        self._found.append({"ip": ip, "port": port, "name": name})
+        self.peer_list.insert("end", "  %s  %s:%d" % (name, ip, port))
+
+        # 关键：以前这里判断 "没有 peer_ip 才自动选中"，结果配置里存着上次的
+        # 对端地址，条件恒为假 —— 列表有设备但对端栏还是红色「未连接」，
+        # 必须手点「重新查找」才正常。改成看**列表有没有选中行**。
+        sel = self.peer_list.curselection()
+        same = (ip == self.peer_ip
+                and self.peer_port is not None
+                and port == int(self.peer_port))
+        if not sel or same:
+            self.peer_list.selection_clear(0, "end")
+            self.peer_list.selection_set(self.peer_list.size() - 1)
+            self.on_pick_peer(None)
+        self.lbl_status.config(text=_t("g083") % (name, ip))
+
+    def on_pick_peer(self, _evt):
+        sel = self.peer_list.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        found = getattr(self, "_found", [])
+        if idx < len(found):
+            f = found[idx]
+            self.set_peer(f["ip"], int(f.get("port") or L.TCP_PORT), f.get("name"))
+
+    def manual_peer(self):
+        v = simpledialog.askstring(
+            _t("g084"),
+            _t("g085") % L.TCP_PORT,
+            initialvalue=self.peer_ip, parent=self.root)
+        if not v:
+            return
+
+        cands = []
+        for tok in v.replace(",", " ").replace(_t("g086"), " ").replace(";", " ").split():
+            ip, port = tok, L.TCP_PORT
+            if ":" in tok:
+                ip, ps = tok.rsplit(":", 1)
+                try:
+                    port = int(ps)
+                except Exception:
+                    port = L.TCP_PORT
+            ip = ip.strip()
+            if ip and ip not in [c[0] for c in cands]:
+                cands.append((ip, port))
+        if not cands:
+            return
+        if len(cands) == 1:
+            self.set_peer(cands[0][0], cands[0][1], cands[0][0])
+            self.test_peer()
+            return
+        self._try_candidates(cands)
+
+    def _try_candidates(self, cands):
+        """一次填了多个地址：逐个连，第一个连通的就用。"""
+        self.lbl_peer_sub.config(text=_t("g087") % len(cands))
+        self.lbl_status.config(text=_t("g088") % len(cands))
+
+        def work():
+            errs = []
+            for ip, port in cands:
+                try:
+                    c = L.LinkClient(ip, port, self.key, timeout=3).open()
+                    name = c.peer_name
+                    c.close()
+                    self.events.put(("peer_ok", (ip, port, name)))
+                    return
+                except L.AuthError:
+                    self.events.put(("peer_auth_fail", ip))
+                    return
+                except Exception as e:
+                    errs.append(_t("g089") % (ip, str(e)[:36]))
+            self.events.put(("peer_fail", _t("g090").join(errs)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def net_info(self):
+        d = L.list_ipv4()
+        rows = []
+        for x in d:
+            tag = L._demo_net_type(x["ip"])
+            rows.append(_t("g091") % (
+                x["ip"], x["prefix"], x["bcast"], tag))
+        if not rows:
+            rows.append(_t("g092"))
+        txt = (_t("g093") % (L.hostname(), "\n".join(rows)))
+        messagebox.showinfo(_t("g094"), txt.replace("**", ""), parent=self.root)
+
+    def test_peer(self):
+        if not self.peer_ip:
+            messagebox.showinfo(APP_NAME, _t("g095"))
+            return
+        self.lbl_peer_sub.config(text=_t("g096"))
+
+        def work():
+            try:
+                c = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=6).open()
+                name = c.peer_name
+                c.close()
+                self.events.put(("peer_ok", (self.peer_ip, self.peer_port, name)))
+            except L.AuthError:
+                self.events.put(("peer_auth_fail", self.peer_ip))
+            except Exception as e:
+                self.events.put(("peer_fail", str(e)))
+        threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------ 添加目标
+
+    def on_drop(self, event):
+        try:
+            items = self.root.tk.splitlist(event.data)
+        except Exception:
+            items = [event.data]
+        self.add_paths([i for i in items if i])
+
+    def on_paste(self, event=None, force=False):
+        """
+        Ctrl+V / 右键「粘贴」：把资源管理器里「复制」的文件/文件夹塞进待发清单。
+        剪贴板里是普通文字时不动它 —— 该给输入框用的还是给输入框。
+        force=True 表示是鼠标点菜单进来的，不用管焦点在哪个控件上。
+        """
+        if not force:
+            try:
+                w = self.root.focus_get()
+            except Exception:
+                w = None
+            if isinstance(w, (tk.Entry, tk.Text, ttk.Entry, ttk.Combobox)):
+                return None
+        if self.sending:
+            self.lbl_status.config(text=_t("g097"))
+            return "break"
+        paths = clipboard_file_paths()
+        if not paths:
+            self.lbl_status.config(
+                text=_t("g098"))
+            return "break"
+        added = self.add_paths(paths)
+        if not added:
+            self.lbl_status.config(
+                text=_t("g099") % len(paths))
+        return "break"
+
+    def _build_queue_menu(self):
+        """待发清单右键菜单。索引：0 粘贴 / 2 加文件 / 3 加文件夹 / 5 移除 / 6 清空。"""
+        m = tk.Menu(self.root, tearoff=0, font=(FONT, 9))
+        m.add_command(label=_t("g100"),
+                      command=lambda: self.on_paste(force=True))
+        m.add_separator()
+        m.add_command(label=_t("g008"), command=self.pick_files)
+        m.add_command(label=_t("g009"), command=self.pick_folder)
+        m.add_separator()
+        m.add_command(label=_t("g057"), command=self.remove_selected)
+        m.add_command(label=_t("g056"), command=self.clear_queue)
+        return m
+
+    def queue_menu(self, event):
+        """
+        在待发清单里点右键：弹菜单，最上面就是「粘贴」。
+        点到某一行就顺带选中它；点在空白处则保留原来的多选。
+        """
+        row = self.tree.identify_row(event.y)
+        sel = self.tree.selection()
+        if row:
+            self.tree.focus(row)
+            if row not in sel:
+                self.tree.selection_set(row)
+                sel = self.tree.selection()
+
+        busy = bool(self.sending)
+        m = self.qmenu
+        try:
+            for idx in (0, 2, 3):
+                m.entryconfigure(idx, state="disabled" if busy else "normal")
+            m.entryconfigure(5, state="normal" if (sel and not busy) else "disabled")
+            m.entryconfigure(6, state="normal"
+                             if (self.queue_paths and not busy) else "disabled")
+        except Exception:
+            pass
+        try:
+            m.tk_popup(event.x_root, event.y_root)
+        finally:
+            m.grab_release()
+        return "break"
+
+    def pick_files(self):
+        ps = filedialog.askopenfilenames(title=_t("g101"), parent=self.root)
+        if ps:
+            self.add_paths(list(ps))
+
+    def pick_folder(self):
+        p = filedialog.askdirectory(title=_t("g102"), parent=self.root)
+        if p:
+            self.add_paths([p])
+
+    def add_paths(self, paths):
+        """加进待发清单，返回真正新增的项数（重复/不存在的会跳过）。"""
+        if len(paths) > 1:
+            self.lbl_status.config(text=_t("g103") % len(paths))
+            try:
+                self.root.update_idletasks()
+            except Exception:
+                pass
+        added = 0
+        for p in paths:
+            p = os.path.normpath(p)
+            if p in self.queue_paths:
+                continue
+            if not (os.path.isfile(p) or os.path.isdir(p)):
+                continue
+            self.queue_paths.append(p)
+            added += 1
+            name = os.path.basename(p.rstrip("\\/")) or p
+            if os.path.isdir(p):
+                n = 0
+                sz = 0
+                for root, dirs, files in os.walk(p):
+                    for f in files:
+                        n += 1
+                        try:
+                            sz += os.path.getsize(os.path.join(root, f))
+                        except Exception:
+                            pass
+                self._tree_row(p, name + "\\", L.human_size(sz) + _t("g104") % n, "", "", _t("g105"))
+            else:
+                sz = os.path.getsize(p)
+                self._tree_row(p, name, L.human_size(sz), "", "", _t("g105"))
+        self._refresh_queue_summary()
+        if added:
+            self.lbl_status.config(text=_t("g106") % added)
+        return added
+
+    def _tree_row(self, keypath, name, size, prog, speed, state):
+        if keypath in self.rows:
+            iid = self.rows[keypath]
+            self.tree.item(iid, values=(name, size, prog, speed, state))
+            return iid
+        iid = self.tree.insert("", "end", values=(name, size, prog, speed, state))
+        self.rows[keypath] = iid
+        return iid
+
+    def clear_queue(self):
+        if self.sending:
+            messagebox.showinfo(APP_NAME, _t("g107"))
+            return
+        self.queue_paths = []
+        self.rows = {}
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        self._refresh_queue_summary()
+        self.pbar["value"] = 0
+        self.lbl_status.config(text=_t("g067"))
+
+    def remove_selected(self):
+        if self.sending:
+            return
+        for iid in self.tree.selection():
+            for k, v in list(self.rows.items()):
+                if v == iid:
+                    if k in self.queue_paths:
+                        self.queue_paths.remove(k)
+                    del self.rows[k]
+            self.tree.delete(iid)
+        self._refresh_queue_summary()
+
+    def on_tree_double(self, _e):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        for k, v in self.rows.items():
+            if v == sel[0]:
+                if os.path.isfile(k):
+                    subprocess.Popen(["explorer", "/select,", k])
+                elif os.path.isdir(k):
+                    subprocess.Popen(["explorer", k])
+                break
+
+    # ------------------------------------------------------------ 发送
+
+    def start_send(self):
+        if self.sending:
+            return
+        if not self.queue_paths:
+            messagebox.showinfo(APP_NAME, _t("g108"))
+            return
+        if not self.peer_ip:
+            messagebox.showinfo(APP_NAME, _t("g109"))
+            return
+
+        self.sending = True
+        self.cancel_flag.clear()
+        self.btn_send.config(state="disabled")
+        self.btn_pull.config(state="disabled")
+        self.btn_stop.config(state="normal")
+        self.pbar["value"] = 0
+        self.last_ui = 0.0
+        self.total_bytes = 0
+        self.done_bytes = 0
+
+        targets = L.collect_targets(self.queue_paths)
+
+        self._prepare_rows(targets)
+
+        self._send_t0 = time.time()
+        threading.Thread(target=self._send_worker, args=(targets,), daemon=True).start()
+
+    def _prepare_rows(self, targets):
+        """
+        建映射：发送时用的相对路径 -> 清单里对应的那一行。
+
+        以前这里没映射，进度/速度/状态列全都更新不到（rows 的键是本地绝对
+        路径，而进度回调给的是相对路径），传完清单还显示"待发送"。
+        """
+        self.rel_rows = {}
+        self.item_total = {}
+        self.item_done = {}
+        self.item_rels = {}
+        self.item_ok = {}
+        self.item_files_total = {}
+        self.item_files_done = {}
+        for local, rel in targets:
+            top = self._top_of(local)
+            iid = self.rows.get(top) if top else None
+            if not iid:
+                continue
+            self.rel_rows[rel] = iid
+            self.item_rels.setdefault(iid, []).append(rel)
+            self.item_ok.setdefault(iid, set())
+            self.item_files_total[iid] = self.item_files_total.get(iid, 0) + 1
+            try:
+                self.item_total[iid] = self.item_total.get(iid, 0) + os.path.getsize(local)
+            except Exception:
+                pass
+            vals = list(self.tree.item(iid, "values"))
+            vals[2], vals[3], vals[4] = "0%", "", _t("g110")
+            self.tree.item(iid, values=vals)
+
+    def _top_of(self, local):
+        """本地文件属于清单里的哪一项（文件本身，或它所属的文件夹）。"""
+        lp = os.path.normpath(local)
+        for p in self.queue_paths:
+            np = os.path.normpath(p)
+            if lp == np:
+                return p
+            if os.path.isdir(np):
+                try:
+                    if os.path.commonpath([lp, np]) == np:
+                        return p
+                except ValueError:
+                    pass
+        return None
+
+    def _send_worker(self, targets):
+        total_all = sum(os.path.getsize(p) for p, _ in targets if os.path.isfile(p))
+        self.total_bytes = total_all
+        done_all = 0
+        skipped_n = 0
+        failed = []
+
+        try:
+            cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=10).open()
+        except L.AuthError:
+            self.events.put(("send_end", (0, 0, [], _t("g111"))))
+            return
+        except Exception as e:
+            self.events.put(("send_end", (0, 0, [], _t("g112") % e)))
+            return
+
+        self.peer_root = cli.peer_root or ""
+        self.events.put(("peer_root", self.peer_root))
+        self.events.put(("status", _t("g113") % (cli.peer_name or self.peer_ip)))
+
+        try:
+            for idx, (local, rel) in enumerate(targets):
+                if self.cancel_flag.is_set():
+                    break
+                try:
+                    size = os.path.getsize(local)
+                except Exception:
+                    continue
+
+                state = ("file_start", (rel, idx + 1, len(targets), size))
+                self.events.put(state)
+
+                base = done_all
+
+                def prog(d, t, spd, _base=base, _size=size):
+                    now = time.time()
+                    if now - self.last_ui < 0.10 and d < t:
+                        return
+                    self.last_ui = now
+                    self.done_bytes = _base + d
+                    self.events.put(("progress", (rel, d, t, spd)))
+
+                try:
+                    skipped, sent, _ = cli.upload(local, rel, progress=prog,
+                                                  cancel=self.cancel_flag.is_set)
+                    if skipped:
+                        skipped_n += 1
+                        self.events.put(("file_done", (rel, size, _t("g114"), 0)))
+                    else:
+                        self.events.put(("file_done", (rel, size, _t("g115"), 0)))
+                    done_all += size
+                except InterruptedError:
+                    self.events.put(("file_done", (rel, 0, _t("g116"), 0)))
+                    break
+                except Exception as e:
+                    failed.append((rel, str(e)))
+                    self.events.put(("file_done", (rel, size, _t("g117"), 0)))
+                    done_all += size
+        finally:
+            try:
+                cli.close()
+            except Exception:
+                pass
+
+        self.events.put(("send_end", (done_all, skipped_n, failed, None)))
+
+    def _send_done(self, done, skipped, failed, err):
+        self.sending = False
+        self.btn_send.config(state="normal")
+        self.btn_pull.config(state="normal")
+        self.btn_stop.config(state="disabled")
+
+        if err:
+            self.lbl_status.config(text=err)
+            messagebox.showerror(APP_NAME, err)
+            return
+
+        secs = max(0.001, time.time() - self._send_t0) if self._send_t0 else 0.0
+        avg = (done / secs / 1048576.0) if secs else 0.0
+
+        items = []
+        for p in list(self.queue_paths):
+            iid = self.rows.get(p)
+            if not iid:
+                continue
+            vals = self.tree.item(iid, "values")
+            items.append({
+                "name": os.path.basename(p.rstrip("\\/")) + ("\\" if os.path.isdir(p) else ""),
+                "size": str(vals[1]),
+                "state": str(vals[4]),
+            })
+
+        self.last_result = {
+            "peer": self.peer_name or self.peer_ip,
+            "addr": "%s:%s" % (self.peer_ip, self.peer_port),
+            "root": self.peer_root or "",
+            "items": items,
+            "bytes": done,
+            "secs": secs,
+            "avg": avg,
+            "skipped": skipped,
+            "failed": list(failed or []),
+            "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        self.btn_detail.config(state="normal")
+
+        short = _t("g118") % (
+            len(items), (self.peer_name or self.peer_ip),
+            L.human_size(done), secs, avg)
+        if self.peer_root:
+            short += _t("g119") % self.peer_root
+        if skipped:
+            short += _t("g120") % skipped
+        if failed:
+            short = _t("g121") % (short, len(failed))
+
+        if failed:
+            self.lbl_status.config(text=short)
+            detail = "\n".join(_t("g122") % (n, e) for n, e in failed[:8])
+            messagebox.showwarning(
+                APP_NAME, short + _t("g123") + detail +
+                _t("g124"))
+        else:
+            self.pbar["value"] = 1000
+            self.lbl_status.config(text=short)
+
+        # 传完就把已经成功的条目从清单里移走，只留失败/取消的
+        self._prune_finished()
+
+    def _prune_finished(self):
+        """已全部成功的清单项自动移走；有失败/取消的留着，方便直接重发。"""
+        if self.sending:
+            return
+        gone_ids = []
+        for p in list(self.queue_paths):
+            iid = self.rows.get(p)
+            if not iid:
+                self.queue_paths.remove(p)
+                continue
+            rels = self.item_rels.get(iid) or []
+            ok = self.item_ok.get(iid, set())
+            if rels and len(ok) >= len(rels):
+                self.queue_paths.remove(p)
+                self.rows.pop(p, None)
+                for r in rels:
+                    self.rel_rows.pop(r, None)
+                self.tree.delete(iid)
+                gone_ids.append(iid)
+        for iid in gone_ids:
+            for d in (self.item_total, self.item_done, self.item_rels,
+                      self.item_ok, self.item_files_total, self.item_files_done):
+                d.pop(iid, None)
+        if gone_ids:
+            self._refresh_queue_summary()
+            if not self.queue_paths:
+                self.lbl_qsum.config(text=_t("g125"))
+
+    def show_result_detail(self):
+        """上一次传输的完整结果：发到哪台机的哪个目录、都发了些什么。"""
+        r = self.last_result
+        if not r:
+            messagebox.showinfo(APP_NAME, _t("g126"),
+                                parent=self.root)
+            return
+
+        L_ = []
+        L_.append(_t("g127") % (r["peer"], r["addr"]))
+        L_.append(_t("g128") % (r["root"] or _t("g129")))
+        L_.append(_t("g130") % r["when"])
+        L_.append("")
+        L_.append(_t("g131") % (
+            len(r["items"]), L.human_size(r["bytes"]), r["secs"], r["avg"]))
+        L_.append("")
+        L_.append(_t("g132"))
+        L_.append("-" * 62)
+        for it in r["items"]:
+            L_.append("  %-34s %16s  %s" % (it["name"], it["size"], it["state"]))
+        if r["skipped"]:
+            L_.append("")
+            L_.append(_t("g133") % r["skipped"])
+        L_.append("")
+        L_.append(_t("g134"))
+        if r["root"]:
+            L_.append(_t("g135"))
+        L_.append("-" * 62)
+        for it in r["items"]:
+            nm = it["name"].rstrip("\\/")
+            full = os.path.join(r["root"], nm) if r["root"] else nm
+            L_.append("  %s%s" % (full, _t("g136") if it["name"].endswith("\\") else ""))
+        L_.append("")
+        if r["failed"]:
+            L_.append(_t("g137") % len(r["failed"]))
+            L_.append("-" * 62)
+            for n, e in r["failed"]:
+                L_.append(_t("g138") % (n, e))
+        else:
+            L_.append(_t("g139"))
+        text = "\n".join(L_)
+
+        win = tk.Toplevel(self.root)
+        win.title(_t("g140"))
+        win.configure(bg=C_BG)
+        # 小屏上别超出可用区域：宽度、高度都按屏幕兜一下
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        win.geometry("%dx%d" % (min(780, max(560, sw - 80)),
+                                min(500, max(360, sh - 160))))
+        win.minsize(560, 340)
+        win.transient(self.root)
+
+        # 先占底部按钮栏，再放正文 —— 否则 expand 的 Text 会把按钮挤出去，
+        # 只剩半截露在窗口边沿（v1.2.2 在阳台机上的样子）。
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(side="bottom", fill="x", pady=8)
+        btn_box = tk.Frame(bar, bg=C_BG)
+        btn_box.pack(fill="x", padx=12)
+
+        txt = tk.Text(win, wrap="none", bg="#fbfcfd", fg=C_TEXT,
+                      font=(FONT, 9), relief="flat", padx=12, pady=10)
+        sb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(10, 0))
+        txt.insert("1.0", text)
+        txt.config(state="disabled")
+
+        def copy_all():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.lbl_status.config(text=_t("g141"))
+
+        btn_close = self._mk_btn(btn_box, _t("g142"), win.destroy, "#78909c", width=8)
+        btn_close.pack(side="right")
+        self._mk_btn(btn_box, _t("g143"), copy_all, "#546e7a", width=10).pack(
+            side="left")
+        if r.get("root"):
+            self._mk_btn(btn_box, _t("g144"),
+                         lambda: self.open_peer_dir(r), C_GREEN,
+                         width=None).pack(side="left", padx=(10, 0))
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.after(30, lambda: self._fit_detail(win, txt, btn_box))
+
+    def _fit_detail(self, win, txt, btn_box):
+        """
+        兜底调整：某些 DPI 缩放下按钮会比窗口宽 / 正文被压没，
+        这里按实际所需尺寸把窗口撑开一点（不超出屏幕）。
+        """
+        try:
+            win.update_idletasks()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            need_w = btn_box.winfo_reqwidth() + 48
+            w, h = win.winfo_width(), win.winfo_height()
+            if need_w > w:
+                w = min(need_w, sw - 40)
+            if txt.winfo_height() < 80:
+                h = min(h + (80 - txt.winfo_height()), sh - 80)
+            if (w, h) != (win.winfo_width(), win.winfo_height()):
+                win.geometry("%dx%d" % (w, h))
+                win.update_idletasks()
+        except Exception:
+            pass
+
+    def open_peer_dir(self, r=None):
+        """
+        让对端在**它自己的屏幕**上打开接收目录。
+        走 LanSplice 自己的加密通道，不需要开文件共享、不用输账号密码。
+        """
+        r = r if isinstance(r, dict) else self.last_result
+        if not r:
+            return
+        name = r.get("peer") or ""
+        addr = r.get("addr") or ""
+        if ":" in addr:
+            ip, port_s = addr.rsplit(":", 1)
+        else:
+            ip, port_s = addr, str(self.peer_port or "")
+        try:
+            port = int(port_s)
+        except Exception:
+            port = 0
+        if not ip or not port:
+            messagebox.showinfo(APP_NAME, _t("g145"),
+                                parent=self.root)
+            return
+        name = name or ip
+        # 先试上次传输的那个地址；对端可能换了 IP（DHCP 续租/拔插网线），
+        # 再退到当前列表里选中的设备地址。
+        cands = [(ip, port)]
+        try:
+            cur = (self.peer_ip or "", int(self.peer_port or 0))
+        except Exception:
+            cur = ("", 0)
+        if cur[0] and cur[1] and cur != (ip, port):
+            cands.append(cur)
+        self.lbl_status.config(text=_t("g146") % name)
+
+        def work():
+            err = ""
+            for a_ip, a_port in cands:
+                cli = None
+                try:
+                    cli = L.LinkClient(a_ip, a_port, self.key, timeout=8).open()
+                    path = cli.open_dir("")
+                    self.events.put(("open_peer_ok", (name, path)))
+                    return
+                except Exception as e:
+                    err = str(e)
+                finally:
+                    if cli:
+                        try:
+                            cli.close()
+                        except Exception:
+                            pass
+            self.events.put(("open_peer_err", (name, err)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------ 防火墙状态
+
+    def _refresh_fw_status(self):
+        self.lbl_fw.config(text=_t("g041"), fg=C_SUB)
+        threading.Thread(target=self._fw_status_worker, daemon=True).start()
+
+    def _fw_status_worker(self):
+        # 规则查询本身要 3~4 秒（PowerShell 启动 + 遍历规则），
+        # 所以把网络类别和规则合并成一次调用，别让状态灯一直停在"检测中"。
+        script = (
+            "$o=@();"
+            "Get-NetConnectionProfile -ErrorAction SilentlyContinue | "
+            "ForEach-Object { $o += 'CAT|' + $_.NetworkCategory };"
+            "Get-NetFirewallRule -DisplayName 'LanSplice*' -ErrorAction SilentlyContinue | "
+            "ForEach-Object { $o += 'RULE|' + $_.DisplayName + '|' + $_.Enabled };"
+            "if ($o.Count -eq 0) { 'NONE' } else { $o }")
+        try:
+            rc, out, err = self._ps(script, timeout=25)
+            pub = False
+            alive = 0
+            for line in (out or "").splitlines():
+                line = line.strip()
+                if line.startswith("CAT|"):
+                    if line[4:] not in ("Private", "DomainAuthenticated"):
+                        pub = True
+                elif line.startswith("RULE|"):
+                    parts = line.split("|")
+                    if len(parts) >= 3 and parts[2].lower() == "true":
+                        alive += 1
+            if alive:
+                txt = _t("g147") + (_t("g148") if pub else "")
+                self.events.put(("fw_status", (True, txt)))
+            else:
+                self.events.put(("fw_status", (False, _t("g149"))))
+        except Exception:
+            self.events.put(("fw_status", (False, _t("g150"))))
+
+    def stop_send(self):
+        if self.sending:
+            self.cancel_flag.set()
+            self.lbl_status.config(text=_t("g151"))
+
+    # ------------------------------------------------------------ 取回
+
+    def pull_dialog(self):
+        if not self.peer_ip:
+            messagebox.showinfo(APP_NAME, _t("g109"))
+            return
+        rel = simpledialog.askstring(
+            _t("g152"),
+            _t("g153"),
+            parent=self.root)
+        if not rel:
+            return
+        self.lbl_status.config(text=_t("g154"))
+
+        def work():
+            try:
+                cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=10).open()
+                st = cli.stat(rel)
+                cli.close()
+                self.events.put(("pull_stat", (rel, st)))
+            except Exception as e:
+                self.events.put(("pull_stat", (rel, {"t": "error", "msg": str(e)})))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_pull_stat(self, rel, st):
+        if st.get("t") == "error":
+            messagebox.showerror(APP_NAME, st.get("msg"))
+            self.lbl_status.config(text=_t("g067"))
+            return
+        if not st.get("exists"):
+            messagebox.showinfo(APP_NAME, _t("g155") % rel)
+            self.lbl_status.config(text=_t("g067"))
+            return
+        if st.get("is_dir"):
+            messagebox.showinfo(
+                APP_NAME,
+                _t("g156") % rel)
+            self.lbl_status.config(text=_t("g067"))
+            return
+        dst = filedialog.asksaveasfilename(
+            title=_t("g157"), initialfile=os.path.basename(rel), parent=self.root)
+        if not dst:
+            return
+        self.sending = True
+        self.btn_stop.config(state="normal")
+        threading.Thread(target=self._pull_worker, args=(rel, dst), daemon=True).start()
+
+    def _pull_worker(self, rel, dst):
+        try:
+            cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=10).open()
+        except Exception as e:
+            self.events.put(("pull_end", str(e)))
+            return
+        self.last_ui = 0.0
+
+        def prog(d, t, spd):
+            now = time.time()
+            if now - self.last_ui < 0.10 and d < t:
+                return
+            self.last_ui = now
+            self.events.put(("progress", (rel, d, t, spd)))
+
+        try:
+            self.events.put(("file_start", (rel, 1, 1, 0)))
+            cli.download(rel, dst, progress=prog, cancel=self.cancel_flag.is_set)
+            self.events.put(("file_done", (rel, os.path.getsize(dst), _t("g115"), 0)))
+            cli.close()
+            self.events.put(("pull_end", None))
+        except Exception as e:
+            try:
+                cli.close()
+            except Exception:
+                pass
+            self.events.put(("pull_end", str(e)))
+
+    # ------------------------------------------------------------ 接收端
+
+    def _start_server(self, force=False, retry=0):
+        if not force and not self.cfg.get("auto_server", True):
+            self.lbl_status.config(text=_t("g158"))
+            return
+        if self.server and self.server.running:
+            return
+        recv = self.cfg["recv_root"]
+        try:
+            os.makedirs(recv, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror(APP_NAME, _t("g159") % e)
+            return
+        self.server = L.PeerServer(
+            recv, self.key, port=int(self.cfg["tcp_port"]),
+            log=lambda s: self.events.put(("log", s)),
+            notify=lambda k, d: self.events.put(("recv", (k, d))),
+            allow_discovery=bool(self.cfg.get("discovery", True)),
+        )
+        self.server.start_server()
+        self.root.after(500, lambda: self._after_server(retry))
+
+    def _after_server(self, retry=0):
+        s = self.server
+        if s and s.error:
+            err = str(s.error)
+            # 10048 = 端口已占用。常见于另一个窗口还开着（旧版没关），
+            # 或刚重启过接收端、上一个 socket 还没被系统回收。
+            busy = ("10048" in err or "in use" in err.lower()
+                    or _t("g160") in err or _t("g161") in err)
+            if busy and retry < 3:
+                self.lbl_status.config(
+                    text=_t("g162")
+                         % (int(self.cfg["tcp_port"]), 2, retry + 1))
+                self.server = None
+                self.root.after(
+                    2000,
+                    lambda: self._start_server(force=True, retry=retry + 1))
+                return
+            messagebox.showwarning(
+                APP_NAME,
+                _t("g163")
+                % (err,
+                   _t("g164")
+                   if busy else
+                   _t("g165")))
+        self._refresh_self()
+
+    def _restart_server(self):
+        """
+        关闭并重新创建接收端。
+
+        为什么必须这么做：实测发现，改完防火墙规则（或把网络类别
+        从「公用」改成「专用」）之后，**已经存在的监听 socket 不会
+        自动套用新规则**，表现就是"放行了还是连不上，关掉程序重开才好"。
+        重建一次监听，新规则立刻生效。
+        """
+        try:
+            if self.server:
+                self.server.stop_server()
+        except Exception:
+            pass
+        self.server = None
+        time.sleep(0.4)          # 让旧 socket 真正释放，避免 10048
+        try:
+            self._start_server(force=True)
+            return True
+        except Exception:
+            return False
+
+    def toggle_server(self):
+        if self.server and self.server.running:
+            self.server.stop_server()
+            self.server = None
+            self.lbl_status.config(text=_t("g072"))
+        else:
+            self._start_server()
+            self.lbl_status.config(text=_t("g166"))
+        self.root.after(400, self._refresh_self)
+
+    def open_recv_root(self):
+        os.makedirs(self.cfg["recv_root"], exist_ok=True)
+        subprocess.Popen(["explorer", self.cfg["recv_root"]])
+
+    # ------------------------------------------------------------ 配对码
+
+    def show_code(self):
+        code = L.key_to_code(self.key)
+        messagebox.showinfo(
+            _t("g044"),
+            _t("g167") % code)
+        self.copy_code()
+
+    def copy_code(self):
+        code = L.key_to_code(self.key)
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(code)
+            self.lbl_status.config(text=_t("g168"))
+        except Exception:
+            pass
+
+    def enter_code(self):
+        v = simpledialog.askstring(
+            _t("g046"),
+            _t("g169"),
+            parent=self.root)
+        if not v:
+            return
+        try:
+            key = L.code_to_key(v)
+        except ValueError as e:
+            messagebox.showerror(APP_NAME, str(e))
+            return
+        self.key = key
+        self.cfg["pair_key"] = base64.b64encode(key).decode()
+        save_cfg(self.cfg)
+        self._refresh_code()
+        # 重启接收端，让新码生效
+        if self.server and self.server.running:
+            self.server.stop_server()
+            self.server = None
+            self.root.after(300, self._start_server)
+        messagebox.showinfo(APP_NAME, _t("g170"))
+        if self.peer_ip:
+            self.test_peer()
+
+    def regen_code(self):
+        if not messagebox.askyesno(
+                APP_NAME, _t("g171")):
+            return
+        self.key = L.new_pair_key()
+        self.cfg["pair_key"] = base64.b64encode(self.key).decode()
+        save_cfg(self.cfg)
+        self._refresh_code()
+        if self.server and self.server.running:
+            self.server.stop_server()
+            self.server = None
+            self.root.after(300, self._start_server)
+        self.show_code()
+
+    # ------------------------------------------------------------ 设置 / 安全
+
+    def set_recv_root(self):
+        p = filedialog.askdirectory(title=_t("g172"),
+                                    initialdir=self.cfg["recv_root"], parent=self.root)
+        if not p:
+            return
+        if p.rstrip("\\").upper() in ("C:", "C:\\WINDOWS", "C:\\WINDOWS\\SYSTEM32"):
+            messagebox.showerror(APP_NAME, _t("g173"))
+            return
+        self.cfg["recv_root"] = p
+        save_cfg(self.cfg)
+        if self.server and self.server.running:
+            self.server.stop_server()
+            self.server = None
+            self.root.after(300, self._start_server)
+        self._refresh_self()
+        self.lbl_status.config(text=_t("g174"))
+
+    # ------------------------------------------------------------ 防火墙
+
+    def _ps(self, script, timeout=25):
+        """跑一段系统管理脚本，返回 (rc, stdout, stderr)。"""
+        exe = "powershell"
+        try:
+            p = subprocess.run(
+                [exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                capture_output=True, text=True, timeout=timeout,
+                encoding="utf-8", errors="ignore")
+            return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+        except Exception as e:
+            return -1, "", str(e)
+
+    def _net_categories(self):
+        """本机各接口的网络类别 [(索引, Private/Public/DomainAuthenticated)]。"""
+        rc, out, _ = self._ps(
+            "Get-NetConnectionProfile -ErrorAction SilentlyContinue "
+            "| ForEach-Object { \"$($_.InterfaceIndex)|$($_.NetworkCategory)\" }")
+        res = []
+        for line in out.splitlines():
+            line = line.strip()
+            if "|" not in line:
+                continue
+            a, b = line.split("|", 1)
+            try:
+                res.append((int(a), b.strip()))
+            except Exception:
+                pass
+        return res
+
+    def _fw_rules(self):
+        """现存 LanSplice 规则 [(名称, 启用, 作用域)]。"""
+        rc, out, _ = self._ps(
+            "Get-NetFirewallRule -DisplayName 'LanSplice*' -ErrorAction SilentlyContinue "
+            "| ForEach-Object { \"$($_.DisplayName)|$($_.Enabled)|$($_.Profile)\" }")
+        res = []
+        for line in out.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) >= 3:
+                res.append(tuple(parts[:3]))
+        return res
+
+    def _fw_script(self, port, auto_private=False):
+        """
+        拼「一键放行」要执行的脚本。抽出来是为了能单独测语法 ——
+        这段脚本一旦拼错，用户看到的就是一屏红字。
+        """
+        ps_list = ["$ErrorActionPreference='SilentlyContinue';",
+                   # 旧名 Link2PC 的规则一起清掉，避免升级后两套规则并存
+                   "Get-NetFirewallRule | Where-Object { $_.DisplayName -like '*LanSplice*' "
+                   "-or $_.DisplayName -like '*Link2PC*' } | Remove-NetFirewallRule;"]
+        if auto_private:
+            ps_list.append(
+                "Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -ne 'Private' } "
+                "| Set-NetConnectionProfile -NetworkCategory Private;")
+        # 规则同时覆盖公用/专用；真正的门是 RemoteAddress 限内网 + AES + 配对码。
+        # 再加 -Program 只放行本程序：端口不对本机其他程序开放（这是"绝不开到公网"
+        # 之外的第二层收敛，别人写的程序也别想借这两个端口进来）。
+        try:
+            exe_path = os.path.abspath(sys.executable).replace("'", "''")
+        except Exception:
+            exe_path = ""
+        prog = ("-Program '%s' " % exe_path) if exe_path else ""
+        for proto, pnum in (("TCP", port), ("UDP", L.DISCOVERY_PORT)):
+            ps_list.append(
+                "New-NetFirewallRule -DisplayName 'LanSplice-%s' -Direction Inbound "
+                "%s-Protocol %s -LocalPort %d -Action Allow -Profile Any "
+                "-RemoteAddress 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,127.0.0.1 "
+                "| Out-Null;" % (proto, prog, proto, pnum))
+        ps_list.append("Write-Output 'L2P-FW-OK'")
+        return "".join(ps_list)
+
+    def fw_dialog(self, auto_private=False):
+        port = int(self.cfg["tcp_port"])
+        cats = self._net_categories()
+        has_public = any(c not in ("Private", "DomainAuthenticated") for _i, c in cats)
+
+        if has_public and not auto_private:
+            msg = (_t("g175"))
+            if messagebox.askyesno(_t("g176"), msg, parent=self.root):
+                auto_private = True
+
+        msg2 = (
+            _t("g177")
+            % (port, L.DISCOVERY_PORT,
+               _t("g178") if auto_private
+               else _t("g179")))
+        if not messagebox.askyesno(APP_NAME, msg2, parent=self.root):
+            return
+
+        ps = self._fw_script(port, auto_private)
+
+        # 提权执行。
+        #
+        # 这里**绝对不能**把脚本用双引号拼进外层 PowerShell 命令行：
+        # 外层的双引号字符串会先做一次变量展开，`$ErrorActionPreference`
+        # 变成它的当前值 `Continue`、`$_` 变成空，脚本就废了 ——
+        # 用户看到的报错正是「无法将 Continue='SilentlyContinue' 识别为 cmdlet」。
+        # 改用 -EncodedCommand（base64 里只有字母数字和 +/=），外层怎么解析都不会动它。
+        inner = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+        outer = ("Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
+                 "-ArgumentList "
+                 "'-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','%s'" % inner)
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-Command", outer],
+                capture_output=True, text=True, timeout=120)
+        except Exception as e:
+            messagebox.showerror(APP_NAME, _t("g180") % e)
+            return
+
+        rules = self._fw_rules()
+        alive = [r for r in rules if r[1].lower() == "true"]
+
+        # 关键一步：规则变了必须重建监听，否则用户得手动关程序重开才生效
+        self.lbl_status.config(text=_t("g181"))
+        self.root.update_idletasks()
+        ok = self._restart_server()
+
+        messagebox.showinfo(
+            APP_NAME,
+            _t("g182")
+            % (len(alive),
+               _t("g183") if alive else _t("g184"),
+               _t("g185")
+               if ok else
+               _t("g186")))
+        self._refresh_fw_status()
+
+    def diagnose(self):
+        self.lbl_status.config(text=_t("g187"))
+        threading.Thread(target=self._diag_worker, daemon=True).start()
+
+    def _diag_worker(self):
+        out = []
+        port = int(self.cfg["tcp_port"])
+
+        try:
+            ips = ["%s/%d" % (d["ip"], d["prefix"]) for d in L.list_ipv4()]
+            out.append(_t("g188") % L.hostname())
+            out.append("        %s" % ("  ".join(ips) or _t("g069")))
+        except Exception as e:
+            out.append(_t("g189") % e)
+
+        try:
+            cats = self._net_categories()
+            cn = {"Private": _t("g190"), "Public": _t("g191"), "DomainAuthenticated": _t("g192")}
+            if cats:
+                out.append(_t("g193") +
+                           "  ".join(_t("g194") % (i, cn.get(c, c)) for i, c in cats))
+                if any(c not in ("Private", "DomainAuthenticated") for _i, c in cats):
+                    out.append(_t("g195"))
+            else:
+                out.append(_t("g196"))
+        except Exception as e:
+            out.append(_t("g197") % e)
+
+        ok = False
+        sk = socket.socket()
+        sk.settimeout(1.2)
+        try:
+            sk.connect(("127.0.0.1", port))
+            ok = True
+        except Exception:
+            pass
+        finally:
+            sk.close()
+        out.append(_t("g198") % (_t("g199") if ok else _t("g200"), port))
+
+        try:
+            rules = self._fw_rules()
+            if rules:
+                for n, en, pr in rules:
+                    out.append(_t("g201") % (n, en, pr))
+            else:
+                out.append(_t("g202"))
+        except Exception as e:
+            out.append(_t("g203") % e)
+
+        if self.peer_ip:
+            sk = socket.socket()
+            sk.settimeout(2.0)
+            try:
+                sk.connect((self.peer_ip, int(self.peer_port)))
+                out.append(_t("g204") % (self.peer_ip, self.peer_port))
+            except ConnectionRefusedError:
+                out.append(_t("g205")
+                           % (self.peer_ip, self.peer_port))
+            except socket.timeout:
+                out.append(_t("g206")
+                           % (self.peer_ip, self.peer_port))
+            except Exception as e:
+                out.append(_t("g207")
+                           % (self.peer_ip, self.peer_port, type(e).__name__))
+            finally:
+                sk.close()
+        else:
+            out.append(_t("g208"))
+
+        self.events.put(("diag", "\n".join(out)))
+
+    def _show_diag(self, text):
+        self.lbl_status.config(text=_t("g067"))
+        if messagebox.askyesno(_t("g209"), text + _t("g210"),
+                               parent=self.root):
+            self.fw_dialog()
+
+    def security_check(self):
+        lines = []
+        ips = L.local_ips()
+        lines.append(_t("g211") % (L.hostname(), " / ".join(ips) or _t("g212")))
+        try:
+            s = self.server
+            lines.append(_t("g213") % (
+                _t("g214") if (s and s.running) else _t("g215"), int(self.cfg["tcp_port"])))
+        except Exception:
+            pass
+        lines.append("")
+        lines.append(_t("g216"))
+        lines.append(_t("g217"))
+        lines.append(_t("g218"))
+        lines.append(_t("g219"))
+        lines.append(_t("g220"))
+        lines.append("")
+        lines.append(_t("g221"))
+        lines.append(_t("g222"))
+        messagebox.showinfo(_t("g223"), "\n".join(lines))
+
+    # ------------------------------------------------------------ 帮助
+
+    def show_help(self):
+        messagebox.showinfo(
+            _t("g030"),
+            _t("g224"))
+
+    def show_disclaimer(self):
+        messagebox.showinfo(
+            _t("g031"),
+            _t("g225"))
+
+    def show_about(self):
+        messagebox.showinfo(
+            _t("g032"),
+            _t("g226") %
+            (APP_NAME, APP_VER, _t("g002")))
+
+    # ------------------------------------------------------------ 事件泵
+
+    def _pump(self):
+        try:
+            while True:
+                try:
+                    kind, data = self.events.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._handle(kind, data)
+                except Exception:
+                    pass          # 单个事件出错不能拖垮整个界面循环
+        finally:
+            self.root.after(60, self._pump)
+
+    def _handle(self, kind, data):
+        if kind == "diag":
+            self._show_diag(data)
+        elif kind == "peers":
+            self.on_peers(data)
+        elif kind == "peer_ok":
+            ip, port, name = data
+            self.set_peer(ip, port, name)
+            self.lbl_status.config(text=_t("g227") % (name or ip))
+        elif kind == "peer_auth_fail":
+            self.lamp_peer.config(fg=C_RED)
+            self.lbl_peer_sub.config(text=_t("g228"))
+            self.lbl_status.config(text=_t("g228"))
+        elif kind == "peer_fail":
+            self.lamp_peer.config(fg=C_RED)
+            self.lbl_peer_sub.config(text=str(data)[:40])
+            self.lbl_status.config(text=_t("g229") % str(data)[:60])
+        elif kind == "status":
+            self.lbl_status.config(text=str(data))
+        elif kind == "log":
+            if "✗" in data or _t("g117") in data:
+                self.lbl_status.config(text=data)
+        elif kind == "recv":
+            k, d = data
+            if k == "peer_seen":
+                self.on_peer_seen(d)
+            elif k == "recv_done":
+                self.lbl_status.config(
+                    text=_t("g230") % os.path.basename(d.get("path", "")))
+        elif kind == "peer_root":
+            self.peer_root = str(data or "")
+            if self.peer_root:
+                self.lbl_peer_sub.config(
+                    text="%s:%d  →  %s" % (self.peer_ip, int(self.peer_port), self.peer_root))
+        elif kind == "open_peer_ok":
+            name, path = data
+            self.lbl_status.config(text=_t("g231") % (name, path))
+        elif kind == "open_peer_err":
+            name, err = data
+            self.lbl_status.config(text=_t("g067"))
+            if _t("g232") in (err or ""):
+                err = (_t("g233") % APP_VER)
+            messagebox.showwarning(
+                APP_NAME, _t("g234") % (name, err or _t("g235")),
+                parent=self.root)
+        elif kind == "fw_status":
+            ok, txt = data
+            self.lbl_fw.config(text="● " + txt, fg=(C_GREEN if ok else C_RED))
+            self.btn_fw.config(text=(_t("g236") if ok else _t("g040")))
+        elif kind == "file_start":
+            rel, i, n, size = data
+            iid = self.rel_rows.get(rel)
+            if iid:
+                vals = list(self.tree.item(iid, "values"))
+                vals[4] = _t("g237")
+                self.tree.item(iid, values=vals)
+            self.lbl_status.config(
+                text="(%d/%d) %s" % (i, n, os.path.basename(rel.replace("\\", "/"))))
+        elif kind == "progress":
+            rel, d, t, spd = data
+            iid = self.rel_rows.get(rel) or self.rows.get(rel)
+            if iid:
+                tot = self.item_total.get(iid) or t
+                got = self.item_done.get(iid, 0) + d
+                pct = int(got * 100 / tot) if tot else 0
+                vals = list(self.tree.item(iid, "values"))
+                vals[2] = "%d%%" % min(100, pct)
+                vals[3] = fmt_speed(spd)
+                vals[4] = _t("g237")
+                self.tree.item(iid, values=vals)
+            if self.total_bytes:
+                v = int(self.done_bytes * 1000 / self.total_bytes)
+                self.pbar["value"] = max(0, min(1000, v))
+                eta = fmt_eta(self.done_bytes, self.total_bytes, spd)
+                self.lbl_status.config(text="%s / %s  %s%s" % (
+                    L.human_size(self.done_bytes), L.human_size(self.total_bytes),
+                    fmt_speed(spd), (_t("g238") % eta) if eta else ""))
+        elif kind == "file_done":
+            rel, size, st, _ = data
+            iid = self.rel_rows.get(rel) or self.rows.get(rel)
+            if iid:
+                vals = list(self.tree.item(iid, "values"))
+                if st == _t("g115") or _t("g239") in st:
+                    self.item_done[iid] = self.item_done.get(iid, 0) + size
+                    self.item_ok.setdefault(iid, set()).add(rel)
+                    self.item_files_done[iid] = self.item_files_done.get(iid, 0) + 1
+                    ft = self.item_files_total.get(iid, 0)
+                    tot = self.item_total.get(iid, 0)
+                    done_i = self.item_done.get(iid, 0)
+                    if ft <= 1:
+                        vals[2] = "100%"
+                        vals[4] = _t("g115")
+                    else:
+                        vals[2] = "%d%%" % (int(done_i * 100 / tot) if tot else 100)
+                        vals[4] = _t("g240") % (self.item_files_done[iid], ft)
+                elif st == _t("g117"):
+                    vals[2] = "—"
+                    vals[3] = ""
+                    vals[4] = _t("g117")
+                elif st == _t("g116"):
+                    vals[4] = _t("g116")
+                self.tree.item(iid, values=vals)
+        elif kind == "send_end":
+            done, skipped, failed, err = data
+            self._send_done(done, skipped, failed, err)
+        elif kind == "pull_stat":
+            self._on_pull_stat(*data)
+        elif kind == "pull_end":
+            self.sending = False
+            self.btn_stop.config(state="disabled")
+            if data:
+                self.lbl_status.config(text=_t("g241") % data)
+                messagebox.showerror(APP_NAME, _t("g241") % data)
+            else:
+                self.lbl_status.config(text=_t("g242"))
+                self.pbar["value"] = 1000
+
+    # ------------------------------------------------------------ 关闭
+
+    def on_close(self):
+        if self.sending:
+            if not messagebox.askyesno(APP_NAME, _t("g243")):
+                return
+            self.cancel_flag.set()
+        try:
+            if self.server:
+                self.server.stop_server()
+        except Exception:
+            pass
+        self.root.destroy()
+
+
+def _run():
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+
+    global HAS_DND
+    root = None
+    if HAS_DND:
+        try:
+            root = TkinterDnD.Tk()
+        except Exception:
+            HAS_DND = False          # 打包后 tkdnd 缺失时优雅降级
+            root = None
+    if root is None:
+        root = tk.Tk()
+    App(root)
+    root.mainloop()
+
+
+def main():
+    try:
+        _run()
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        logp = _t("g244")
+        try:
+            logp = os.path.join(os.path.dirname(cfg_path()), "crash.log")
+            with open(logp, "w", encoding="utf-8") as f:
+                f.write(tb)
+        except Exception:
+            pass
+        try:
+            r = tk.Tk()
+            r.withdraw()
+            messagebox.showerror(
+                _t("g245"),
+                _t("g246") + tb[-1200:] + _t("g247") + logp)
+            r.destroy()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
