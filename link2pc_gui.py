@@ -48,7 +48,7 @@ except Exception:
 
 APP_NAME = "LanSplice"
 APP_TITLE = "LanSplice · 双机直传"
-APP_VER = "1.5.0"
+APP_VER = L.APP_VER          # 唯一来源在 core，别在这里再写死一份
 COPYRIGHT = "© 永远的兰兰"
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -964,7 +964,7 @@ class App:
             errs = []
             for ip, port in cands:
                 try:
-                    c = L.LinkClient(ip, port, self.key, timeout=3).open()
+                    c = L.LinkClient(ip, port, self.key, timeout=L.CONNECT_TIMEOUT).open()
                     name = c.peer_name
                     c.close()
                     self.events.put(("peer_ok", (ip, port, name)))
@@ -997,7 +997,7 @@ class App:
 
         def work():
             try:
-                c = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=6).open()
+                c = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=L.CONNECT_TIMEOUT).open()
                 name = c.peer_name
                 c.close()
                 self.events.put(("peer_ok", (self.peer_ip, self.peer_port, name)))
@@ -1139,7 +1139,7 @@ class App:
         def work():
             try:
                 cli = L.LinkClient(self.peer_ip, self.peer_port, self.key,
-                                   timeout=10).open()
+                                   timeout=L.CONNECT_TIMEOUT).open()
                 try:
                     cli.send_text(body, clip=clip)
                     name = cli.peer_name or self.peer_ip
@@ -1539,7 +1539,7 @@ class App:
                 return
 
             cli = L.LinkClient(self.peer_ip, self.peer_port, self.key,
-                               timeout=10).open()
+                               timeout=L.CONNECT_TIMEOUT).open()
             updated = 0
             skipped_n = 0
             try:
@@ -1793,12 +1793,15 @@ class App:
         deep = bool(self.cfg.get("deep_verify"))
 
         try:
-            cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=10).open()
+            cli = L.LinkClient(self.peer_ip, self.peer_port, self.key,
+                               timeout=L.CONNECT_TIMEOUT).open()
         except L.AuthError:
             self.events.put(("send_end", (0, 0, [], _t("g111"))))
             return
         except Exception as e:
-            self.events.put(("send_end", (0, 0, [], _t("g112") % e)))
+            self.events.put(("send_end",
+                             (0, 0, [], L.conn_error_text(e, self.peer_ip,
+                                                          self.peer_port))))
             return
 
         self.peer_root = cli.peer_root or ""
@@ -1967,7 +1970,7 @@ class App:
 
         def work():
             try:
-                cli = L.LinkClient(ip, port, self.key, timeout=4).open()
+                cli = L.LinkClient(ip, port, self.key, timeout=L.CONNECT_TIMEOUT).open()
                 name = cli.peer_name or lp.get("name") or ip
                 root = cli.peer_root
                 cli.close()
@@ -2151,7 +2154,7 @@ class App:
             for a_ip, a_port in cands:
                 cli = None
                 try:
-                    cli = L.LinkClient(a_ip, a_port, self.key, timeout=8).open()
+                    cli = L.LinkClient(a_ip, a_port, self.key, timeout=L.CONNECT_TIMEOUT).open()
                     path = cli.open_dir("")
                     self.events.put(("open_peer_ok", (name, path)))
                     return
@@ -2225,7 +2228,7 @@ class App:
 
         def work():
             try:
-                cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=10).open()
+                cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=L.CONNECT_TIMEOUT).open()
                 st = cli.stat(rel)
                 cli.close()
                 self.events.put(("pull_stat", (rel, st)))
@@ -2258,7 +2261,7 @@ class App:
 
     def _pull_worker(self, rel, dst):
         try:
-            cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=10).open()
+            cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=L.CONNECT_TIMEOUT).open()
         except Exception as e:
             self.events.put(("pull_end", str(e)))
             return
