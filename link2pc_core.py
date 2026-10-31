@@ -573,7 +573,7 @@ class PeerServer(threading.Thread):
                 except Exception:
                     pass
                 continue
-            threading.Thread(target=self._handle, args=(conn, addr),
+            threading.Thread(target=self._handle_conn, args=(conn, addr),
                              daemon=True).start()
 
         self.running = False
@@ -697,7 +697,7 @@ class PeerServer(threading.Thread):
                 pass
 
     # ---- 单连接处理
-    def _handle(self, conn, addr):
+    def _handle_conn(self, conn, addr):
         conn.settimeout(120)
         peer = addr[0]
         try:
