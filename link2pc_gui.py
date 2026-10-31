@@ -32,10 +32,26 @@ import link2pc_core as L
 import link2pc_i18n as I18N
 from link2pc_i18n import t as _t
 
+try:
+    import link2pc_tray as TRAY
+    HAS_TRAY = True
+except Exception:
+    TRAY = None
+    HAS_TRAY = False
+
+try:
+    import link2pc_web as WEB
+    HAS_WEB = True
+except Exception:
+    WEB = None
+    HAS_WEB = False
+
 APP_NAME = "LanSplice"
 APP_TITLE = "LanSplice · 双机直传"
-APP_VER = "1.3.3"
+APP_VER = "1.4.0"
 COPYRIGHT = "© 永远的兰兰"
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 # ---------------------------------------------------------------- 配色
 
@@ -163,8 +179,59 @@ def load_cfg():
     d.setdefault("peer_port", L.TCP_PORT)
     d.setdefault("discovery", True)
     d.setdefault("auto_server", True)
+    # ---- v1.4 常驻相关
+    d.setdefault("close_to_tray", True)   # 关窗时缩到托盘，接收不中断
+    d.setdefault("notify_done", True)     # 传完弹气泡
+    d.setdefault("sound", True)           # 传完响一声
+    d.setdefault("deep_verify", False)    # 默认不做整文件重读校验（慢）
+    d.setdefault("clip_auto", False)      # 收到文字不自动改剪贴板
+    d.setdefault("last_peer", {})         # {"ip":..,"port":..,"name":..}
+    d.setdefault("web_port", 47822)       # 手机网页端端口
     save_cfg(d)
     return d
+
+
+def autostart_cmd():
+    """
+    写进注册表的那条命令。
+
+    打包后是 exe 自己带 --min（启动即缩托盘，不弹窗打断开机）；
+    源码运行时是 python + 脚本路径 —— 调试时也能用，不用手工改注册表。
+    """
+    if getattr(sys, "frozen", False):
+        return '"%s" --min' % sys.executable
+    return '"%s" "%s" --min' % (
+        sys.executable, os.path.abspath(__file__))
+
+
+def autostart_get():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            v, _ = winreg.QueryValueEx(k, APP_NAME)
+        return bool(v)
+    except Exception:
+        return False
+
+
+def autostart_set(on):
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE) as k:
+            if on:
+                winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ,
+                                  autostart_cmd())
+            else:
+                try:
+                    winreg.DeleteValue(k, APP_NAME)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+        return True
+    except Exception:
+        return False
 
 
 def save_cfg(d):
@@ -235,13 +302,22 @@ class App:
         self.total_bytes = 0            # 本次总字节（进度条用）
         self.done_bytes = 0             # 本次已完成字节
         self.last_ui = 0.0              # 进度刷新节流时间戳
+        self.tray = None                # 托盘对象
+        self._quitting = False          # 真正退出（区别于缩到托盘）
+        self.last_peer = dict(self.cfg.get("last_peer") or {})
+        self._tx_text_win = None        # 发送文字的窗口（避免重复开）
+        self._text_win = None           # 收到文字的窗口
+        self._qr_win = None             # 手机传文件窗口
+        self.web = None                 # 手机网页端服务
 
         self._build_ui()
         self._start_server()
         self._pump()
         self.root.after(400, self.scan_peers)
         self.root.after(600, self._refresh_fw_status)
+        self.root.after(1600, self._try_last_peer)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._init_tray()
 
     # ------------------------------------------------------------ 界面
 
@@ -291,6 +367,11 @@ class App:
         fm.add_separator()
         fm.add_command(label=_t("g010"), command=self.start_send)
         fm.add_command(label=_t("g011"), command=self.pull_dialog)
+        fm.add_command(label=_t("g320"), command=self.send_text_dialog,
+                       accelerator="Ctrl+Shift+V")
+        fm.add_command(label=_t("g328"), command=self.send_clipboard)
+        fm.add_separator()
+        fm.add_command(label=_t("g360"), command=self.show_qr_share)
         fm.add_separator()
         fm.add_command(label=_t("g012"), command=self.show_result_detail)
         fm.add_separator()
@@ -326,11 +407,39 @@ class App:
         hm.add_command(label=_t("g032"), command=self.show_about)
         m.add_cascade(label=_t("g033"), menu=hm)
 
+        # ---- 设置：常驻相关的几个开关，都在这里，不占主界面
+        stm = tk.Menu(m, tearoff=0, font=(FONT, 9))
+        self.var_notify = tk.BooleanVar(value=bool(self.cfg.get("notify_done", True)))
+        self.var_sound = tk.BooleanVar(value=bool(self.cfg.get("sound", True)))
+        self.var_tray = tk.BooleanVar(value=bool(self.cfg.get("close_to_tray", True)))
+        self.var_boot = tk.BooleanVar(value=autostart_get())
+        self.var_verify = tk.BooleanVar(value=bool(self.cfg.get("deep_verify")))
+        self.var_clipauto = tk.BooleanVar(value=bool(self.cfg.get("clip_auto")))
+        stm.add_checkbutton(label=_t("g350"), variable=self.var_notify,
+                            command=self._save_opts)
+        stm.add_checkbutton(label=_t("g351"), variable=self.var_sound,
+                            command=self._save_opts)
+        stm.add_checkbutton(label=_t("g352"), variable=self.var_tray,
+                            command=self._save_opts)
+        stm.add_separator()
+        stm.add_checkbutton(label=_t("g331"), variable=self.var_verify,
+                            command=self._save_toggles)
+        stm.add_checkbutton(label=_t("g330"), variable=self.var_clipauto,
+                            command=self._save_toggles)
+        stm.add_separator()
+        stm.add_checkbutton(label=_t("g353"), variable=self.var_boot,
+                            command=self._toggle_boot)
+        stm.add_separator()
+        stm.add_command(label=_t("g355"), command=self.open_cfg_folder)
+        m.add_cascade(label=_t("g354"), menu=stm)
+
         r.bind("<Control-o>", lambda e: self.pick_files())
         r.bind("<Control-O>", lambda e: self.pick_folder())
         r.bind("<Control-v>", self.on_paste)
         r.bind("<Control-V>", self.on_paste)
         r.bind("<F5>", lambda e: self.scan_peers())
+        r.bind("<Control-Shift-v>", self.send_clipboard)
+        r.bind("<Control-Shift-V>", self.send_clipboard)
 
         # ---- 顶栏：状态
         top = tk.Frame(r, bg=C_PANEL, height=62)
@@ -476,6 +585,8 @@ class App:
         self._mk_btn(btns, _t("g050"), self.pick_files, "#607d8b", width=None).pack(side="left", padx=4)
         self._mk_btn(btns, _t("g051"), self.pick_folder, "#607d8b", width=None).pack(side="left", padx=4)
         self._mk_btn(btns, _t("g052"), self.clear_queue, "#90a4ae", width=None).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g320"), self.send_text_dialog, C_PURPLE,
+                     width=None).pack(side="left", padx=4)
 
         if HAS_DND:
             ok = 0
@@ -693,6 +804,7 @@ class App:
         self.cfg["peer_ip"] = ip
         self.cfg["peer_port"] = port
         save_cfg(self.cfg)
+        self._remember_peer()
 
     def clear_peer(self):
         self.lamp_peer.config(fg=C_RED)
@@ -968,6 +1080,344 @@ class App:
             m.grab_release()
         return "break"
 
+    # ------------------------------------------------------------ 文字互传
+
+    def _save_toggles(self):
+        self.cfg["deep_verify"] = bool(self.var_verify.get())
+        self.cfg["clip_auto"] = bool(self.var_clipauto.get())
+        save_cfg(self.cfg)
+
+    def _save_opts(self):
+        self.cfg["notify_done"] = bool(self.var_notify.get())
+        self.cfg["sound"] = bool(self.var_sound.get())
+        self.cfg["close_to_tray"] = bool(self.var_tray.get())
+        save_cfg(self.cfg)
+
+    def _toggle_boot(self):
+        on = bool(self.var_boot.get())
+        if autostart_set(on):
+            self.lbl_status.config(text=_t("g307") if on else _t("g308"))
+        else:
+            self.var_boot.set(autostart_get())
+            messagebox.showwarning(APP_NAME, _t("g306"), parent=self.root)
+
+    def open_cfg_folder(self):
+        try:
+            L.open_in_file_manager(os.path.dirname(cfg_path()))
+        except Exception:
+            pass
+
+    def clipboard_text(self):
+        """读剪贴板里的纯文字；不是文字就返回空串。"""
+        try:
+            return self.root.clipboard_get() or ""
+        except Exception:
+            return ""
+
+    def _set_clipboard(self, text):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update_idletasks()
+            return True
+        except Exception:
+            return False
+
+    def _push_text(self, body, clip=False):
+        if not body:
+            self.lbl_status.config(text=_t("g329"))
+            return
+        if not self.peer_ip:
+            messagebox.showinfo(APP_NAME, _t("g340"), parent=self.root)
+            return
+
+        def work():
+            try:
+                cli = L.LinkClient(self.peer_ip, self.peer_port, self.key,
+                                   timeout=10).open()
+                try:
+                    cli.send_text(body, clip=clip)
+                    name = cli.peer_name or self.peer_ip
+                finally:
+                    cli.close()
+                self.events.put(("text_ok", (name, len(body))))
+            except L.AuthError:
+                self.events.put(("text_fail", _t("g111")))
+            except Exception as e:
+                self.events.put(("text_fail", str(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def send_clipboard(self, event=None):
+        """Ctrl+Shift+V：把本机剪贴板文字直接推到对端。"""
+        w = self.root.focus_get()
+        if event is not None and isinstance(w, (tk.Entry, tk.Text)):
+            return None          # 光标在输入框里，用户是想粘自己的，让路
+        self._push_text(self.clipboard_text(), clip=True)
+        return "break"
+
+    def send_text_dialog(self):
+        if self._tx_text_win is not None:
+            try:
+                self._tx_text_win.lift()
+                self._tx_text_win.focus_force()
+                return
+            except Exception:
+                self._tx_text_win = None
+
+        win = tk.Toplevel(self.root)
+        self._tx_text_win = win
+        win.title(_t("g321"))
+        win.configure(bg=C_BG)
+        win.geometry("520x380")
+        win.transient(self.root)
+
+        tk.Label(win, text=_t("g342"), bg=C_BG, fg=C_TEXT,
+                 font=(FONT, 9), anchor="w").pack(fill="x", padx=14, pady=(12, 4))
+
+        wrap = tk.Frame(win, bg=C_LINE)
+        wrap.pack(fill="both", expand=True, padx=14)
+        txt = tk.Text(wrap, font=(FONT, 10), bg=C_CARD, fg=C_TEXT,
+                      relief="flat", wrap="word", undo=True, padx=8, pady=6)
+        txt.pack(fill="both", expand=True, padx=1, pady=1)
+        txt.focus_set()
+
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=14, pady=10)
+
+        def fill_clip():
+            t = self.clipboard_text()
+            if not t:
+                return
+            txt.delete("1.0", "end")
+            txt.insert("1.0", t)
+
+        def do_send():
+            body = txt.get("1.0", "end-1c")
+            if not body.strip():
+                return
+            self._on_text_win_close()
+            self._push_text(body, clip=False)
+
+        def on_close():
+            self._on_text_win_close()
+
+        self._mk_btn(bar, _t("g341"), fill_clip, "#607d8b",
+                     width=None).pack(side="left")
+        self._mk_btn(bar, _t("g327"), on_close, C_GRAY,
+                     width=None).pack(side="right", padx=(6, 0))
+        self._mk_btn(bar, _t("g321"), do_send, C_PURPLE,
+                     width=None).pack(side="right")
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        win.bind("<Escape>", lambda e: on_close())
+
+    def _on_text_win_close(self):
+        try:
+            if self._tx_text_win is not None:
+                self._tx_text_win.destroy()
+        except Exception:
+            pass
+        self._tx_text_win = None
+
+    def on_recv_text(self, d):
+        """
+        对端推来一段文字。
+
+        默认弹窗让用户自己决定复制不复制；勾了「自动写剪贴板」就直接写。
+        不默认自动写 —— 它会把用户手上正要粘的东西顶掉，属于帮倒忙。
+        """
+        body = d.get("body") or ""
+        who = d.get("from") or self.peer_ip or "?"
+        self.lbl_status.config(text=_t("g324") % who)
+
+        if self.cfg.get("clip_auto"):
+            if self._set_clipboard(body):
+                self._notify(_t("g324") % who, _t("g326"))
+            else:
+                self._notify(_t("g324") % who, body[:80])
+            return
+
+        self._notify(_t("g324") % who, body[:80])
+        self._show_text_window(who, body)
+
+    def _show_text_window(self, who, body):
+        if self._text_win is not None:
+            try:
+                self._text_win.destroy()
+            except Exception:
+                pass
+        win = tk.Toplevel(self.root)
+        self._text_win = win
+        win.title(_t("g344"))
+        win.configure(bg=C_BG)
+        win.geometry("520x360")
+        win.transient(self.root)
+
+        tk.Label(win, text=_t("g324") % who, bg=C_BG, fg=C_TEXT,
+                 font=(FONT, 9, "bold"), anchor="w").pack(fill="x", padx=14,
+                                                          pady=(12, 4))
+        wrap = tk.Frame(win, bg=C_LINE)
+        wrap.pack(fill="both", expand=True, padx=14)
+        txt = tk.Text(wrap, font=(FONT, 10), bg=C_CARD, fg=C_TEXT,
+                      relief="flat", wrap="word", padx=8, pady=6)
+        txt.pack(fill="both", expand=True, padx=1, pady=1)
+        txt.insert("1.0", body)
+        txt.config(state="disabled")
+
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=14, pady=10)
+        lab = tk.Label(bar, text="", bg=C_BG, fg=C_GREEN, font=(FONT, 8))
+        lab.pack(side="left")
+
+        def do_copy():
+            if self._set_clipboard(body):
+                lab.config(text=_t("g326"))
+
+        self._mk_btn(bar, _t("g325"), do_copy, C_GREEN,
+                     width=None).pack(side="right", padx=(6, 0))
+        self._mk_btn(bar, _t("g327"), win.destroy, C_GRAY,
+                     width=None).pack(side="right")
+
+        def on_close():
+            self._text_win = None
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", on_close)
+
+    # ------------------------------------------------------------ 手机网页端
+
+    def show_qr_share(self):
+        if not HAS_WEB:
+            return
+        if self._qr_win is not None:
+            try:
+                self._qr_win.lift()
+                self._qr_win.focus_force()
+                return
+            except Exception:
+                self._qr_win = None
+
+        recv = self.cfg["recv_root"]
+        port = int(self.cfg.get("web_port") or WEB.WEB_PORT)
+        try:
+            os.makedirs(recv, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror(APP_NAME, str(e), parent=self.root)
+            return
+
+        if self.web is not None:
+            try:
+                self.web.stop()
+            except Exception:
+                pass
+            self.web = None
+
+        sv = WEB.WebShare(recv, port=port,
+                          log=lambda s: self.events.put(("log", s)))
+        if not sv.start():
+            messagebox.showerror(APP_NAME, _t("g365") % port, parent=self.root)
+            return
+        self.web = sv
+        url = sv.url()
+
+        win = tk.Toplevel(self.root)
+        self._qr_win = win
+        win.title(_t("g360"))
+        win.configure(bg=C_BG)
+        win.resizable(False, False)
+        win.transient(self.root)
+
+        tk.Label(win, text=_t("g361"), bg=C_BG, fg=C_SUB, font=(FONT, 9),
+                 justify="left").pack(anchor="w", padx=18, pady=(14, 4))
+
+        cv = tk.Canvas(win, width=252, height=252, bg=C_WHITE,
+                       highlightthickness=1, highlightbackground=C_LINE)
+        cv.pack(padx=18, pady=4)
+        if not self._draw_qr(cv, url, 232):
+            cv.create_text(126, 126, text="QR", fill=C_SUB, font=(FONT, 12))
+
+        tk.Label(win, text=_t("g369"), bg=C_BG, fg=C_TEXT,
+                 font=(FONT, 9, "bold")).pack(pady=(0, 2))
+
+        ent = tk.Entry(win, font=("Consolas", 9), bg=C_CARD, fg=C_TEXT,
+                       relief="flat", justify="center", width=46)
+        ent.insert(0, url)
+        ent.config(state="readonly")
+        ent.pack(padx=18, pady=(2, 2))
+
+        tk.Label(win, text=_t("g366"), bg=C_BG, fg=C_SUB,
+                 font=(FONT, 8)).pack(pady=(6, 0))
+
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(padx=18, pady=12)
+        lab = tk.Label(bar, text=_t("g362") % sv.token[:8], bg=C_BG,
+                       fg=C_SUB, font=(FONT, 8))
+        lab.pack(side="left")
+
+        def do_copy():
+            if self._set_clipboard(url):
+                lab.config(text=_t("g364"), fg=C_GREEN)
+
+        def do_open():
+            try:
+                os.startfile(url)
+            except Exception:
+                pass
+
+        self._mk_btn(bar, _t("g368"), do_open, "#607d8b",
+                     width=None).pack(side="right", padx=(6, 0))
+        self._mk_btn(bar, _t("g363"), do_copy, C_BLUE,
+                     width=None).pack(side="right")
+        self._mk_btn(bar, _t("g327"), self._close_qr, C_GRAY,
+                     width=None).pack(side="right", padx=(6, 0))
+
+        win.protocol("WM_DELETE_WINDOW", self._close_qr)
+
+    def _close_qr(self):
+        try:
+            if self.web is not None:
+                self.web.stop()
+        except Exception:
+            pass
+        self.web = None
+        try:
+            if self._qr_win is not None:
+                self._qr_win.destroy()
+        except Exception:
+            pass
+        self._qr_win = None
+
+    def _draw_qr(self, canvas, text, size=232):
+        """
+        把二维码矩阵直接画到 Canvas 上。
+
+        不用 qrcode 的图片输出（那需要 Pillow），只要矩阵 ——
+        qrcode 的矩阵是纯 Python 算的，32 位包里现成能用，也少一个依赖。
+        """
+        try:
+            import qrcode
+            q = qrcode.QRCode(border=2, box_size=1,
+                              error_correction=qrcode.constants.ERROR_CORRECT_M)
+            q.add_data(text)
+            q.make(fit=True)
+            m = q.get_matrix()
+        except Exception:
+            return False
+        n = len(m)
+        if not n:
+            return False
+        cell = max(1, int(size // n))
+        off = (size - cell * n) // 2 + 8
+        canvas.delete("all")
+        for y, row in enumerate(m):
+            y0 = off + y * cell
+            for x, v in enumerate(row):
+                if v:
+                    x0 = off + x * cell
+                    canvas.create_rectangle(x0, y0, x0 + cell, y0 + cell,
+                                            outline="", fill="#1f2a23")
+        return True
+
     def pick_files(self):
         ps = filedialog.askopenfilenames(title=_t("g101"), parent=self.root)
         if ps:
@@ -1141,6 +1591,7 @@ class App:
         done_all = 0
         skipped_n = 0
         failed = []
+        deep = bool(self.cfg.get("deep_verify"))
 
         try:
             cli = L.LinkClient(self.peer_ip, self.peer_port, self.key, timeout=10).open()
@@ -1178,11 +1629,30 @@ class App:
                     self.events.put(("progress", (rel, d, t, spd)))
 
                 try:
-                    skipped, sent, _ = cli.upload(local, rel, progress=prog,
-                                                  cancel=self.cancel_flag.is_set)
+                    vstate = {"last": -1}
+
+                    def vprog(d, t, _rel=rel):
+                        # 深校验要先把整个文件读一遍，不给进度用户会以为卡死
+                        if not t:
+                            return
+                        pct = int(d * 100 / t)
+                        if pct >= vstate["last"] + 5 or pct >= 100:
+                            vstate["last"] = pct
+                            self.events.put(("status", _t("g334") % pct))
+
+                    skipped, sent, final_rel = cli.upload(
+                        local, rel, progress=prog,
+                        cancel=self.cancel_flag.is_set,
+                        deep_verify=deep, verify_progress=vprog)
                     if skipped:
                         skipped_n += 1
                         self.events.put(("file_done", (rel, size, _t("g114"), 0)))
+                    elif final_rel and final_rel.replace("\\", "/") != rel.replace("\\", "/"):
+                        # 对端有同名文件，被改名了。不说清楚用户去接收目录会找不到。
+                        self.events.put(("file_done", (
+                            rel, size,
+                            _t("g336") % os.path.basename(final_rel.replace("\\", "/")),
+                            0)))
                     else:
                         self.events.put(("file_done", (rel, size, _t("g115"), 0)))
                     done_all += size
@@ -1261,8 +1731,54 @@ class App:
             self.pbar["value"] = 1000
             self.lbl_status.config(text=short)
 
+        # 缩到托盘时用户看不见进度条，没个动静就完全不知道传完了
+        if not failed and not self.root.winfo_viewable():
+            self._notify(self.peer_name or self.peer_ip, short[:120])
+
+        self._remember_peer()
+
         # 传完就把已经成功的条目从清单里移走，只留失败/取消的
         self._prune_finished()
+
+    def _remember_peer(self):
+        """记下这次连的是谁，下次启动直接连它，不用再扫一遍。"""
+        if not self.peer_ip:
+            return
+        d = {"ip": self.peer_ip, "port": int(self.peer_port),
+             "name": self.peer_name or ""}
+        if d != self.last_peer:
+            self.last_peer = d
+            self.cfg["last_peer"] = d
+            save_cfg(self.cfg)
+
+    def _try_last_peer(self):
+        """
+        启动时自动连上次那台。
+
+        两台固定搭配是常态，每次都重新点设备、等扫描纯属浪费。
+        连不上就安静放弃，不弹窗打扰。
+        """
+        if self.peer_ip:
+            return
+        lp = self.last_peer or {}
+        ip = lp.get("ip")
+        if not ip:
+            return
+        port = int(lp.get("port") or L.TCP_PORT)
+
+        def work():
+            try:
+                cli = L.LinkClient(ip, port, self.key, timeout=4).open()
+                name = cli.peer_name or lp.get("name") or ip
+                root = cli.peer_root
+                cli.close()
+                self.events.put(("peer_ok", (ip, port, name)))
+                if root:
+                    self.events.put(("peer_root", root))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _prune_finished(self):
         """已全部成功的清单项自动移走；有失败/取消的留着，方便直接重发。"""
@@ -1962,10 +2478,38 @@ class App:
 
     # ------------------------------------------------------------ 帮助
 
+    def _info_dialog(self, title, body, w=600, h=480):
+        """
+        可滚动、可复制的说明窗口。
+
+        帮助文本越来越长，messagebox 会撑到屏幕外面去，
+        而且里面字还选不中、复制不出来。
+        """
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.configure(bg=C_BG)
+        win.geometry("%dx%d" % (w, h))
+        win.transient(self.root)
+        wrap = tk.Frame(win, bg=C_LINE)
+        wrap.pack(fill="both", expand=True, padx=12, pady=(12, 0))
+        sb = tk.Scrollbar(wrap)
+        sb.pack(side="right", fill="y")
+        txt = tk.Text(wrap, font=(FONT, 9), bg=C_CARD, fg=C_TEXT,
+                      relief="flat", wrap="word", padx=10, pady=8,
+                      yscrollcommand=sb.set)
+        sb.config(command=txt.yview)
+        txt.pack(side="left", fill="both", expand=True, padx=1, pady=1)
+        txt.insert("1.0", body)
+        txt.config(state="disabled")
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=12, pady=10)
+        self._mk_btn(bar, _t("g327"), win.destroy, C_GRAY,
+                     width=None).pack(side="right")
+        win.bind("<Escape>", lambda e: win.destroy())
+        return win
+
     def show_help(self):
-        messagebox.showinfo(
-            _t("g030"),
-            _t("g224"))
+        self._info_dialog(_t("g030"), _t("g224"))
 
     def show_disclaimer(self):
         messagebox.showinfo(
@@ -2013,6 +2557,12 @@ class App:
             self.lbl_status.config(text=_t("g229") % str(data)[:60])
         elif kind == "status":
             self.lbl_status.config(text=str(data))
+        elif kind == "text_ok":
+            name, n = data
+            self.lbl_status.config(text=_t("g322") % name)
+            self._notify(_t("g320"), _t("g345") % n)
+        elif kind == "text_fail":
+            self.lbl_status.config(text=_t("g323") % str(data)[:60])
         elif kind == "log":
             if "✗" in data or _t("g117") in data:
                 self.lbl_status.config(text=data)
@@ -2020,9 +2570,31 @@ class App:
             k, d = data
             if k == "peer_seen":
                 self.on_peer_seen(d)
+            elif k == "recv_text":
+                self.on_recv_text(d)
+            elif k == "recv_begin":
+                off = int(d.get("offset") or 0)
+                name = os.path.basename(d.get("path", ""))
+                if off > 0:
+                    self.lbl_status.config(
+                        text=_t("g335") % L.human_size(off))
+                else:
+                    self.lbl_status.config(text=_t("g230") % name)
+            elif k == "recv_verify":
+                self.lbl_status.config(text=_t("g334") % 0)
             elif k == "recv_done":
-                self.lbl_status.config(
-                    text=_t("g230") % os.path.basename(d.get("path", "")))
+                name = os.path.basename(d.get("path", ""))
+                self.lbl_status.config(text=_t("g230") % name)
+                if name:
+                    self._notify(_t("g230") % name,
+                                 L.human_size(int(d.get("size") or 0)))
+            elif k == "recv_error":
+                msg = str(d.get("msg") or "")
+                if d.get("kept"):
+                    # 分片留着，用户再点一次发送就能接着传
+                    self.lbl_status.config(text=_t("g337"))
+                else:
+                    self.lbl_status.config(text=msg[:80])
         elif kind == "peer_root":
             self.peer_root = str(data or "")
             if self.peer_root:
@@ -2111,13 +2683,143 @@ class App:
                 self.lbl_status.config(text=_t("g242"))
                 self.pbar["value"] = 1000
 
+    # ------------------------------------------------------------ 托盘与常驻
+
+    def _tray_server_label(self):
+        # 只在托盘线程里被读，不能碰 tkinter 变量，只能看纯 Python 状态
+        running = bool(self.server and self.server.running)
+        return _t("g303") if running else _t("g304")
+
+    def _tray_autostart_label(self):
+        return ("✓ " if autostart_get() else "   ") + _t("g305")
+
+    def _init_tray(self):
+        if not HAS_TRAY:
+            return
+        try:
+            items = [
+                (1, _t("g300")),
+                (2, _t("g301")),
+                (5, _t("g360")),
+                None,
+                (3, self._tray_server_label),
+                (4, self._tray_autostart_label),
+                None,
+                (9, _t("g302")),
+            ]
+            self.tray = TRAY.Tray(
+                "%s  v%s" % (APP_NAME, APP_VER),
+                items,
+                on_show=lambda: self.root.after(0, self.show_window),
+                on_cmd=lambda i: self.root.after(0, self.on_tray_cmd, i),
+                on_quit=lambda: self.root.after(0, self.quit_app))
+            if not self.tray.start(timeout=3.0):
+                self.tray = None
+        except Exception:
+            self.tray = None
+        self._tray_tip()
+
+    def _tray_tip(self):
+        if not self.tray:
+            return
+        running = bool(self.server and self.server.running)
+        try:
+            self.tray.set_tip("%s v%s · %s" % (
+                APP_NAME, APP_VER, _t("g309") if running else _t("g310")))
+        except Exception:
+            pass
+
+    def on_tray_cmd(self, i):
+        if i == 1:
+            self.show_window()
+        elif i == 2:
+            self.open_recv_root()
+        elif i == 3:
+            self.toggle_server()
+            self._tray_tip()
+        elif i == 5:
+            self.show_qr_share()
+        elif i == 4:
+            on = not autostart_get()
+            if autostart_set(on):
+                self.lbl_status.config(text=_t("g307") if on else _t("g308"))
+            else:
+                self.show_window()
+                messagebox.showwarning(APP_NAME, _t("g306"), parent=self.root)
+        elif i == 9:
+            self.quit_app()
+
+    def show_window(self):
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+
+    def hide_window(self):
+        # 手机网页端的承诺是「关掉窗口就停」，缩到托盘也照办
+        try:
+            if self._qr_win is not None:
+                self._close_qr()
+        except Exception:
+            pass
+        try:
+            self.root.withdraw()
+        except Exception:
+            pass
+
+    def _notify(self, title, text, warning=False):
+        """
+        传完给个动静。
+
+        缩到托盘之后，用户看不见进度条，没通知就完全不知道传完了 ——
+        这是「常驻」带来的必要配套，不是锦上添花。
+        """
+        if self.cfg.get("notify_done", True) and self.tray:
+            try:
+                self.tray.notify(title, text, warning)
+            except Exception:
+                pass
+        if self.cfg.get("sound", True):
+            try:
+                import winsound
+                winsound.MessageBeep(0x30 if warning else 0x40)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------ 关闭
 
     def on_close(self):
+        # 默认缩到托盘：接收端一关，对端就找不到你了
+        if self.cfg.get("close_to_tray", True) and self.tray and not self._quitting:
+            self.hide_window()
+            if not self.cfg.get("_tray_hint_shown"):
+                self.cfg["_tray_hint_shown"] = True
+                save_cfg(self.cfg)
+                try:
+                    self.tray.notify(_t("g311"), _t("g312"))
+                except Exception:
+                    pass
+            return
+        self.quit_app()
+
+    def quit_app(self):
         if self.sending:
+            self.show_window()
             if not messagebox.askyesno(APP_NAME, _t("g243")):
                 return
             self.cancel_flag.set()
+        self._quitting = True
+        try:
+            self._close_qr()
+        except Exception:
+            pass
+        try:
+            if self.tray:
+                self.tray.stop()
+        except Exception:
+            pass
         try:
             if self.server:
                 self.server.stop_server()
@@ -2143,7 +2845,10 @@ def _run():
             root = None
     if root is None:
         root = tk.Tk()
-    App(root)
+    app = App(root)
+    # --min：开机自启时直接缩到托盘，不弹窗打断开机
+    if "--min" in sys.argv:
+        root.after(700, app.hide_window)
     root.mainloop()
 
 
