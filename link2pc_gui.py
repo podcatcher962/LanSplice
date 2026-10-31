@@ -48,7 +48,7 @@ except Exception:
 
 APP_NAME = "LanSplice"
 APP_TITLE = "LanSplice · 双机直传"
-APP_VER = "1.4.0"
+APP_VER = "1.5.0"
 COPYRIGHT = "© 永远的兰兰"
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -309,6 +309,9 @@ class App:
         self._text_win = None           # 收到文字的窗口
         self._qr_win = None             # 手机传文件窗口
         self.web = None                 # 手机网页端服务
+        self._mirror_win = None         # 文件夹镜像窗口
+        self._mirror_ui = None          # (win, pbar, lbl, btn)
+        self.mirror_cancel = threading.Event()
 
         self._build_ui()
         self._start_server()
@@ -386,6 +389,8 @@ class App:
         tm.add_separator()
         tm.add_command(label=_t("g019"), command=self.open_recv_root)
         tm.add_command(label=_t("g020"), command=self.clear_queue)
+        tm.add_separator()
+        tm.add_command(label=_t("g370"), command=self.mirror_dialog)
         tm.add_separator()
         tm.add_command(label=_t("g021"), command=self.toggle_server)
         m.add_cascade(label=_t("g022"), menu=tm)
@@ -1417,6 +1422,200 @@ class App:
                     canvas.create_rectangle(x0, y0, x0 + cell, y0 + cell,
                                             outline="", fill="#1f2a23")
         return True
+
+    def mirror_dialog(self):
+        """
+        把本机一个文件夹「补齐」到对端。
+
+        只做加法：新增和改动过的传过去，对端多出来的文件一律不动。
+        删除是不可逆的，一个手滑就是别人的数据没了 —— 这个功能不值得冒那个险。
+        """
+        if self._mirror_win is not None:
+            try:
+                self._mirror_win.lift()
+                self._mirror_win.focus_force()
+                return
+            except Exception:
+                self._mirror_win = None
+
+        win = tk.Toplevel(self.root)
+        self._mirror_win = win
+        win.title(_t("g370"))
+        win.configure(bg=C_BG)
+        win.geometry("560x320")
+        win.transient(self.root)
+
+        tk.Label(win, text=_t("g371"), bg=C_BG, fg=C_SUB, font=(FONT, 9),
+                 justify="left").pack(anchor="w", padx=16, pady=(14, 8))
+
+        row1 = tk.Frame(win, bg=C_BG)
+        row1.pack(fill="x", padx=16, pady=3)
+        tk.Label(row1, text=_t("g372"), bg=C_BG, fg=C_TEXT,
+                 font=(FONT, 9), width=8, anchor="w").pack(side="left")
+        src_var = tk.StringVar()
+        tk.Entry(row1, textvariable=src_var, font=(FONT, 9), bg=C_CARD,
+                 fg=C_TEXT, relief="flat").pack(side="left", fill="x",
+                                               expand=True, padx=(0, 6))
+
+        def pick():
+            d = filedialog.askdirectory(parent=win)
+            if d:
+                src_var.set(os.path.normpath(d))
+                if not dst_var.get().strip():
+                    dst_var.set(os.path.basename(d))
+
+        self._mk_btn(row1, _t("g038"), pick, "#607d8b",
+                     width=None).pack(side="left")
+
+        row2 = tk.Frame(win, bg=C_BG)
+        row2.pack(fill="x", padx=16, pady=3)
+        tk.Label(row2, text=_t("g373"), bg=C_BG, fg=C_TEXT,
+                 font=(FONT, 9), width=8, anchor="w").pack(side="left")
+        dst_var = tk.StringVar()
+        tk.Entry(row2, textvariable=dst_var, font=(FONT, 9), bg=C_CARD,
+                 fg=C_TEXT, relief="flat").pack(side="left", fill="x",
+                                               expand=True)
+        tk.Label(row2, text=_t("g380"), bg=C_BG, fg=C_GRAY,
+                 font=(FONT, 8)).pack(side="left", padx=(6, 0))
+
+        pbar = ttk.Progressbar(win, maximum=1000)
+        pbar.pack(fill="x", padx=16, pady=(14, 4))
+        lbl = tk.Label(win, text="", bg=C_BG, fg=C_SUB, font=(FONT, 8),
+                       anchor="w", justify="left", wraplength=520)
+        lbl.pack(fill="x", padx=16)
+
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=16, pady=12)
+        btn = self._mk_btn(bar, _t("g374"), None, C_GREEN, width=None)
+        btn.pack(side="right")
+
+        def start():
+            src = src_var.get().strip()
+            if not src or not os.path.isdir(src):
+                messagebox.showinfo(APP_NAME, _t("g378"), parent=win)
+                return
+            if not self.peer_ip:
+                messagebox.showinfo(APP_NAME, _t("g340"), parent=win)
+                return
+            dst = dst_var.get().strip().strip("/\\")
+            if not dst:
+                dst = os.path.basename(src)
+            btn.config(state="disabled")
+            lbl.config(text=_t("g375"))
+            pbar["value"] = 0
+            self._mirror_ui = (win, pbar, lbl, btn)
+            self.mirror_cancel.clear()
+            threading.Thread(target=self._mirror_worker,
+                             args=(src, dst), daemon=True).start()
+
+        btn.config(command=start)
+
+        def on_close():
+            self.mirror_cancel.set()
+            self._mirror_win = None
+            self._mirror_ui = None
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        win.bind("<Escape>", lambda e: on_close())
+
+    def _mirror_worker(self, src, dst_rel):
+        try:
+            files = []
+            for cur, dirs, names in os.walk(src):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for n in names:
+                    if n.startswith(".l2p"):
+                        continue
+                    p = os.path.join(cur, n)
+                    try:
+                        st = os.stat(p)
+                    except Exception:
+                        continue
+                    rel = os.path.relpath(p, src).replace(os.sep, "/")
+                    files.append((p, rel, st.st_size, int(st.st_mtime)))
+            if not files:
+                self.events.put(("mirror_done", (0, 0, 0)))
+                return
+
+            cli = L.LinkClient(self.peer_ip, self.peer_port, self.key,
+                               timeout=10).open()
+            updated = 0
+            skipped_n = 0
+            try:
+                # ---------------------------------------------------- 一、核对
+                # 先逐个问对端「这个文件在不在、还是不是同大小同修改时间」。
+                # 目的只有一个：让用户在开工之前知道这活有多大。
+                # 不做这一步的话，进度条按总字节算，看起来永远在慢慢爬，
+                # 分不清「已经在传」还是「大部分都会跳过」。
+                todo = []
+                need = 0
+                for i, (p, rel, size, mtime) in enumerate(files, 1):
+                    if self.mirror_cancel.is_set():
+                        break
+                    target = ("%s/%s" % (dst_rel, rel)) if dst_rel else rel
+                    self.events.put(("mirror_scan", (i, len(files))))
+                    try:
+                        st = cli.stat(target)
+                    except Exception:
+                        st = {}
+                    same = (st.get("t") == "stat" and st.get("exists")
+                            and not st.get("is_dir")
+                            and st.get("size") == size
+                            and abs((st.get("mtime") or 0) - mtime) <= 2)
+                    if same:
+                        skipped_n += 1
+                    else:
+                        todo.append((p, target))
+                        need += size
+                if self.mirror_cancel.is_set():
+                    self.events.put(("mirror_done", (0, skipped_n, 0)))
+                    return
+                self.events.put(("mirror_plan",
+                                 (len(files), len(todo), need, skipped_n)))
+                if not todo:
+                    self.events.put(("mirror_done", (0, skipped_n, 0)))
+                    return
+
+                # ---------------------------------------------------- 二、传
+                total = need
+                sent_total = 0
+                deep = bool(self.cfg.get("deep_verify"))
+                for i, (p, target) in enumerate(todo, 1):
+                    if self.mirror_cancel.is_set():
+                        break
+                    self.events.put(("mirror_file",
+                                     (i, len(todo), os.path.basename(p))))
+                    base = sent_total
+
+                    def prog(d, t, spd, _b=base):
+                        now = time.time()
+                        if now - self.last_ui < 0.12 and d < t:
+                            return
+                        self.last_ui = now
+                        self.events.put(("mirror_prog", (_b + d, total, spd)))
+
+                    is_skipped, _sent, _f = cli.upload(
+                        p, target, progress=prog,
+                        cancel=self.mirror_cancel.is_set, deep_verify=deep,
+                        # 镜像的语义就是"让对端和本地一致"，同名的必须覆盖。
+                        # 不覆盖的话改动过的文件会被存成 xxx (2).txt，越同步越乱。
+                        # 内容没变的文件在核对阶段已经排除，所以这个 overwrite
+                        # 只在"确实改了"的时候才真的动到对端文件。
+                        overwrite=True)
+                    if is_skipped:
+                        skipped_n += 1
+                    else:
+                        updated += 1
+                    sent_total += os.path.getsize(p)
+            finally:
+                try:
+                    cli.close()
+                except Exception:
+                    pass
+            self.events.put(("mirror_done", (updated, skipped_n, need)))
+        except Exception as e:
+            self.events.put(("mirror_err", str(e)))
 
     def pick_files(self):
         ps = filedialog.askopenfilenames(title=_t("g101"), parent=self.root)
@@ -2563,6 +2762,57 @@ class App:
             self._notify(_t("g320"), _t("g345") % n)
         elif kind == "text_fail":
             self.lbl_status.config(text=_t("g323") % str(data)[:60])
+        elif kind == "mirror_scan":
+            i, n = data
+            ui = self._mirror_ui
+            if ui and ui[0].winfo_exists():
+                ui[2].config(text=_t("g381") % (i, n))
+                if n:
+                    # 核对只占前四分之一，剩下留给真正在传的那一段
+                    ui[1]["value"] = i * 1000.0 / n * 0.25
+        elif kind == "mirror_plan":
+            nfiles, ntodo, nbytes, nskip = data
+            ui = self._mirror_ui
+            if ui and ui[0].winfo_exists():
+                ui[1]["value"] = 0
+                ui[2].config(text=_t("g382") % (
+                    nfiles, ntodo, L.human_size(nbytes), nskip))
+        elif kind == "mirror_file":
+            i, n, base = data
+            ui = self._mirror_ui
+            if ui and ui[0].winfo_exists():
+                ui[2].config(text=_t("g376") % (i, n, base))
+        elif kind == "mirror_prog":
+            done, total, spd = data
+            ui = self._mirror_ui
+            if ui and ui[0].winfo_exists():
+                if total:
+                    ui[1]["value"] = 250 + done * 750.0 / total
+                ui[2].config(text="%s / %s   %s" % (
+                    L.human_size(done), L.human_size(total),
+                    fmt_speed(spd)))
+        elif kind == "mirror_done":
+            updated, skipped_n, total = data
+            ui = self._mirror_ui
+            if ui and ui[0].winfo_exists():
+                ui[1]["value"] = 1000
+                if updated == 0 and skipped_n == 0:
+                    ui[2].config(text=_t("g379"))
+                else:
+                    ui[2].config(text=_t("g377") % (
+                        updated, skipped_n, L.human_size(total)))
+                try:
+                    ui[3].config(state="normal")
+                except Exception:
+                    pass
+        elif kind == "mirror_err":
+            ui = self._mirror_ui
+            if ui and ui[0].winfo_exists():
+                ui[2].config(text=str(data)[:90])
+                try:
+                    ui[3].config(state="normal")
+                except Exception:
+                    pass
         elif kind == "log":
             if "✗" in data or _t("g117") in data:
                 self.lbl_status.config(text=data)
@@ -2853,6 +3103,27 @@ def _run():
 
 
 def main():
+    # 带子命令就交给命令行模块，什么都不带才是图形界面。
+    # 这一步必须在建 Tk 之前 —— 否则批处理里调用会闪一下窗口。
+    args = sys.argv[1:]
+    if args and args[0] in ("send", "devices", "version", "-h", "--help", "help"):
+        import link2pc_cli as CLI
+        CLI._attach_console()
+        try:
+            code = CLI.main(args)
+        except SystemExit as e:
+            code = e.code or 0
+        except Exception:
+            # 命令行模式下别弹那个 PyInstaller 的异常对话框，
+            # 把 traceback 打到控制台，退出码 1 —— 批处理能判断出来。
+            import traceback
+            traceback.print_exc()
+            code = 1
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        sys.exit(code or 0)
     try:
         _run()
     except Exception:
