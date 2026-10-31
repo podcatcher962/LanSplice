@@ -397,6 +397,10 @@ An exe produced by 32-bit Python runs on both 32- and 64-bit Windows.
   console with `AttachConsole` first — otherwise it runs completely silently, which is easy to
   miss when testing from a terminal. Launched from Explorer with no arguments, it opens a
   console window of its own so errors are visible
+- **Fixed a crash tied to text encoding**: a Chinese cmd defaults to GBK, which cannot
+  encode `©`, so the command line threw `UnicodeEncodeError` on the copyright line.
+  Real consoles now switch to the UTF-8 code page; pipes and redirects always use UTF-8
+  with `errors="replace"`, so it degrades instead of crashing
 - Help screen gained a 1.5 section; automated checks go from 329 to **358** (8 for mirror,
   20 for the command line)
 
