@@ -34,7 +34,7 @@ from link2pc_i18n import t as _t
 
 APP_NAME = "LanSplice"
 APP_TITLE = "LanSplice · 双机直传"
-APP_VER = "1.3.2"
+APP_VER = "1.3.3"
 COPYRIGHT = "© 永远的兰兰"
 
 # ---------------------------------------------------------------- 配色
@@ -473,9 +473,9 @@ class App:
 
         btns = tk.Frame(self.drop, bg=C_CARD)
         btns.pack(pady=(8, 0))
-        self._mk_btn(btns, _t("g050"), self.pick_files, "#607d8b", width=11).pack(side="left", padx=4)
-        self._mk_btn(btns, _t("g051"), self.pick_folder, "#607d8b", width=11).pack(side="left", padx=4)
-        self._mk_btn(btns, _t("g052"), self.clear_queue, "#90a4ae", width=7).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g050"), self.pick_files, "#607d8b", width=None).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g051"), self.pick_folder, "#607d8b", width=None).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g052"), self.clear_queue, "#90a4ae", width=None).pack(side="left", padx=4)
 
         if HAS_DND:
             ok = 0
@@ -499,10 +499,10 @@ class App:
         self.lbl_qsum.pack(side="left", padx=10)
 
         self.btn_clearq = self._mk_btn(qhead, _t("g056"), self.clear_queue,
-                                       "#78909c", width=9)
+                                       "#78909c", width=None)
         self.btn_clearq.pack(side="right", padx=(4, 0))
         self.btn_rmsel = self._mk_btn(qhead, _t("g057"), self.remove_selected,
-                                      "#607d8b", width=9)
+                                      "#607d8b", width=None)
         self.btn_rmsel.pack(side="right", padx=(4, 0))
         tk.Label(qhead, text=_t("g058"), bg=C_BG, fg=C_SUB,
                  font=(FONT, 8)).pack(side="right", padx=(0, 6))
