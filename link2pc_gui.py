@@ -424,50 +424,166 @@ def fmt_eta(done, total, bps):
     return _t("g007") % (left // 3600)
 
 
-def parse_fw_status(out, expected_exe):
+def _port_spec_has(spec, port):
+    """
+    LocalPort 字段像不像包含这个端口。
+
+    取值可能是 `Any`、`*`、`47820`、`47820,47821`、`47820-47830`，
+    `Any` 表示这条规则不限端口 —— 对「按端口」的规则来说就是全覆盖。
+    """
+    s = (spec or "").strip().lower().replace(" ", "")
+    if not s:
+        return False
+    if s in ("any", "*"):
+        return True
+    for part in s.split(","):
+        if not part:
+            continue
+        if "-" in part:
+            try:
+                a, b = part.split("-", 1)
+                if int(a) <= port <= int(b):
+                    return True
+            except Exception:
+                continue
+        else:
+            try:
+                if int(part) == port:
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _fw_prog_path(raw):
+    """把规则里的 Program 字段变成一个可比较的路径；`Any` 一律当「没填」。"""
+    p = (raw or "").strip()
+    if not p or p.lower() in ("any", "*", "-"):
+        return ""
+    try:
+        return os.path.normcase(os.path.abspath(os.path.expandvars(p)))
+    except Exception:
+        return ""
+
+
+def parse_fw_status(out, expected_exe, ports=None):
     """
     解析「防火墙状态」那段 PowerShell 的输出。
 
     返回 (alive, has_public, stale)：
-      alive      —— 有几条启用的 LanSplice 规则
+      alive      —— 有几条**启用**的 LanSplice 入站规则
       has_public —— 当前网络是不是「公用」（公用网络默认更严）
-      stale      —— 规则存在，但 -Program 指的是**另一个 exe**
+      stale      —— 有规则，但没有一条能真正放行当前这一版
 
-    stale 这一条是 v1.6.0 补的：规则按 exe 完整路径绑定，
-    `LanSplice-v1.5.2.exe` 升到 `v1.6.0.exe` 就是另一条路径，
-    Windows 认为「这个程序没被放行」，而旧规则还在、灯还是绿的 ——
-    用户看到的正是「昨天还好的，今天连不上」。
+    判定分两种规则，不能混着看（v1.7.4 修）：
+
+      · **按端口建的规则**（Program = Any）：看它覆盖了哪个端口。
+        LocalPort 命中 TCP 端口就算这一版被放行。
+      · **按程序建的规则**（Program = 某个 exe）：看它绑的是不是当前 exe。
+        这类规则 LocalPort 通常是 Any，但那不代表放行了别的程序 ——
+        它只放行那一个 exe。
+
+    为什么必须分开：v1.7.3 把「一键放行」改成按端口建规则之后，
+    `Program` 从 exe 路径变成了 `Any`。旧代码把这个字符串当成路径
+    （`os.path.abspath("Any")` → `C:\\...\\Any`），于是永远不等于当前 exe，
+    状态灯就**永远红着**——点了「一键放行」也还是红。
+    更巧的是：机器上如果恰好有一条 Windows 弹窗时自动建的
+    `lansplice-vX.Y.Z` 规则（带 exe 路径），旧判据反而会通过，
+    于是「一台红一台绿」看着像灵异事件。
     """
+    if ports is None:
+        ports = (L.TCP_PORT, L.DISCOVERY_PORT)
+    try:
+        want_ports = tuple(int(p) for p in ports)
+    except Exception:
+        want_ports = ()
+    tcp_port = want_ports[0] if want_ports else L.TCP_PORT
+
+    want = _fw_prog_path(expected_exe)
+
     pub = False
     alive = 0
+    alive_in = 0           # 入站且启用：真正能不能收到文件只看这个
+    alive_unknown = 0      # 老格式行，读不出方向
+    covered = False        # 有按端口的规则放行了 TCP 端口
+    self_ok = False        # 有按程序的规则绑着当前 exe
     progs = set()
+    has_port_info = False  # 至少有一条入站规则给出了端口字段（能据此判断）
+
     for line in (out or "").splitlines():
         line = line.strip()
+
         if line.startswith("CAT|"):
             if line[4:] not in ("Private", "DomainAuthenticated"):
                 pub = True
-        elif line.startswith("RULE|"):
-            p = line.split("|")
-            if len(p) >= 3 and p[2].lower() == "true":
-                alive += 1
-        elif line.startswith("PROG|"):
-            p = line.split("|", 2)
-            raw = (p[2] if len(p) >= 3 else "").strip()
-            if not raw:
-                continue
-            try:
-                raw = os.path.expandvars(raw)
-                progs.add(os.path.normcase(os.path.abspath(raw)))
-            except Exception:
-                continue
-    stale = False
-    if alive and progs and expected_exe:
-        try:
-            want = os.path.normcase(os.path.abspath(expected_exe))
-            stale = want not in progs
-        except Exception:
-            stale = False
+            continue
+
+        # 老格式（v1.7.3 及以前只有 PROG 行）：只当「按程序」看
+        if line.startswith("PROG|"):
+            np = _fw_prog_path(line.split("|", 2)[2] if line.count("|") >= 2 else "")
+            if np:
+                progs.add(np)
+            continue
+
+        if not line.startswith("RULE|"):
+            continue
+        p = line.split("|")
+        if len(p) < 3 or p[2].strip().lower() != "true":
+            continue                      # 被禁用的规则不算数
+        alive += 1
+        if len(p) < 7:
+            alive_unknown += 1            # 老格式：读不出方向和端口
+            continue
+
+        direction = p[3].strip().lower()
+        portspec = p[5]
+        np = _fw_prog_path(p[6])
+        if not direction.startswith("in"):
+            continue                      # 出站规则放行不了别人发进来
+        alive_in += 1
+        if np:
+            progs.add(np)                 # 按程序的规则
+        else:
+            has_port_info = True          # 按端口的规则，只有端口说了算
+            if _port_spec_has(portspec, tcp_port):
+                covered = True
+
+    if want and want in progs:
+        self_ok = True
+
+    if self_ok or covered:
+        ok = True
+    elif alive_in == 0 and alive_unknown == 0:
+        # 一条入站规则都没有（只有出站，或者压根没规则）：确实没放行
+        ok = False
+    elif not progs and not has_port_info:
+        # 有入站规则，但读不出端口和程序：当作「不知道」，不要报红吓人。
+        # 信息不足就报警，用户只会白折腾一趟。
+        ok = True
+    else:
+        ok = False
+    stale = bool(alive) and not ok
     return alive, pub, stale
+
+
+# 查一次防火墙状态用的 PowerShell。状态灯和「一键放行」的结果判定共用一份，
+# 免得两处判据不一致——那正是「点完放行灯还红」最容易被忽略的来源。
+#
+# RULE 行字段：名称|启用|方向|协议|端口|程序
+# v1.7.3 起规则可以「按端口」建（Program=Any），只看 Program
+# 会永远判成「绑着旧版本」—— 端口才是判断放行有没有生效的关键。
+FW_STATUS_PS = (
+    "$o=@();"
+    "Get-NetConnectionProfile -ErrorAction SilentlyContinue | "
+    "ForEach-Object { $o += 'CAT|' + $_.NetworkCategory };"
+    "Get-NetFirewallRule -DisplayName 'LanSplice*' -ErrorAction SilentlyContinue | "
+    "ForEach-Object {"
+    "  $r = $_;"
+    "  $app = ($r | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue).Program;"
+    "  $pf = ($r | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue);"
+    "  $o += 'RULE|' + $r.DisplayName + '|' + $r.Enabled + '|' + $r.Direction +"
+    "    '|' + $pf.Protocol + '|' + $pf.LocalPort + '|' + $app };"
+    "if ($o.Count -eq 0) { 'NONE' } else { $o }")
 
 
 # ---------------------------------------------------------------- 主窗口
@@ -2921,6 +3037,30 @@ class App:
 
     # ------------------------------------------------------------ 防火墙状态
 
+    def _fw_read_status(self, timeout=25):
+        """
+        同步查一次防火墙状态，返回 (alive, pub, stale, 原始输出, 期望路径)。
+
+        抽出来是因为「一键放行」放完必须**用同一套判据**再验一遍：
+        以前只看「规则有几条是启用的」，规则建歪了也照样报告成功，
+        用户面对的却是灯还红着 —— 比不报还糟。
+        """
+        rc, out, err = self._ps(FW_STATUS_PS, timeout=timeout)
+        try:
+            want = os.path.abspath(sys.executable)
+        except Exception:
+            want = ""
+        # 端口要拿**这台机器配置里的**，不能写死默认值：
+        # 用户改过 tcp_port 的话，规则建在别的端口上，
+        # 拿 47820 去比会一直判「没放行」—— 又是一个假红。
+        try:
+            port = int(self.cfg.get("tcp_port") or L.TCP_PORT)
+        except Exception:
+            port = L.TCP_PORT
+        alive, pub, stale = parse_fw_status(out, want,
+                                            ports=(port, L.DISCOVERY_PORT))
+        return alive, pub, stale, out, want
+
     def _refresh_fw_status(self):
         if not P.IS_WIN:
             # Linux 上没什么可「检测」的：读规则要 root，工具各家不同。
@@ -2947,25 +3087,8 @@ class App:
             return
         # 规则查询本身要 3~4 秒（PowerShell 启动 + 遍历规则），
         # 所以把网络类别和规则合并成一次调用，别让状态灯一直停在"检测中"。
-        # PROG 那两行是 v1.6.0 加的：只有「规则里绑的 exe」才说明这版被放行。
-        script = (
-            "$o=@();"
-            "Get-NetConnectionProfile -ErrorAction SilentlyContinue | "
-            "ForEach-Object { $o += 'CAT|' + $_.NetworkCategory };"
-            "Get-NetFirewallRule -DisplayName 'LanSplice*' -ErrorAction SilentlyContinue | "
-            "ForEach-Object { $o += 'RULE|' + $_.DisplayName + '|' + $_.Enabled;"
-            "  $pr = ($_ | Get-NetFirewallApplicationFilter).Program;"
-            "  $o += 'PROG|' + $_.DisplayName + '|' + $pr };"
-            "if ($o.Count -eq 0) { 'NONE' } else { $o }")
         try:
-            rc, out, err = self._ps(script, timeout=25)
-            # 必须和 _fw_script 里 -Program 用的那个路径完全一致：
-            # 打包后是 exe 自己，源码运行时是 python.exe
-            try:
-                want = os.path.abspath(sys.executable)
-            except Exception:
-                want = ""
-            alive, pub, stale = parse_fw_status(out, want)
+            alive, pub, stale, out, want = self._fw_read_status()
             if stale:
                 self.events.put(("fw_status", ("stale", _t("g383"))))
             elif alive:
@@ -3266,9 +3389,12 @@ class App:
         这段脚本一旦拼错，用户看到的就是一屏红字。
         """
         ps_list = ["$ErrorActionPreference='SilentlyContinue';",
-                   # 旧名 Link2PC 的规则一起清掉，避免升级后两套规则并存
-                   "Get-NetFirewallRule | Where-Object { $_.DisplayName -like '*LanSplice*' "
-                   "-or $_.DisplayName -like '*Link2PC*' } | Remove-NetFirewallRule;"]
+                   # 旧名 Link2PC 的规则一起清掉，避免升级后两套规则并存。
+                   # 用 -DisplayName 过滤，不要 Get-NetFirewallRule 全表再 Where ——
+                   # 装了很多软件的机器上规则上千条，全表遍历要多花好几秒，
+                   # 而这期间用户面对的是「一键放行」对话框一动不动。
+                   "Get-NetFirewallRule -DisplayName '*LanSplice*','*Link2PC*' "
+                   "-ErrorAction SilentlyContinue | Remove-NetFirewallRule;"]
         if auto_private:
             ps_list.append(
                 "Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -ne 'Private' } "
@@ -3447,6 +3573,22 @@ class App:
         self.lbl_status.config(text=_t("g181"))
         self.root.update_idletasks()
         ok = self._restart_server()
+
+        # 放完必须自己验一遍。
+        # 以前这里只数「有几条启用的规则」，规则建歪了也报成功，
+        # 用户看到的是「已重设」+ 状态灯还是红的 —— 现在用状态灯同一套判据。
+        try:
+            _a, _p, stale, _o, _w = self._fw_read_status()
+        except Exception:
+            stale = False                    # 查不了就别乱报，交给状态灯说「未知」
+
+        if stale:
+            # 没生效：说清楚，别让人以为已经好了
+            msg = _t("g477") % (port, L.DISCOVERY_PORT)
+            self.lbl_status.config(text=_t("g478"))
+            messagebox.showwarning(APP_NAME, msg, parent=self.root)
+            self._refresh_fw_status()
+            return
 
         summary = _t("g182") % (len(alive),
                                 _t("g183") if alive else _t("g184"),
