@@ -20,13 +20,22 @@ SRC_DIR=$(cd "$(dirname "$0")" && pwd)
 # 装哪些文件：只装真正要跑的，_build/ _tests/ 不进目标机器
 FILES="link2pc_core.py link2pc_cli.py link2pc_gui.py link2pc_i18n.py \
 link2pc_platform.py link2pc_paths.py link2pc_history.py link2pc_web.py \
-link2pc_tray.py app.ico README.md LICENSE"
+link2pc_deps.py link2pc_tray.py app.ico README.md LICENSE"
 
 DESKTOP_FILE="/usr/share/applications/lansplice.desktop"
 ICON_DIR="/usr/share/icons/hicolor"
 
 say() { printf '%s\n' "$*"; }
 die() { printf '错误：%s\n' "$*" >&2; exit 1; }
+
+# 不只看顶层 import：C 扩展没装好时，顶层 cryptography 也可能导得进去。
+crypto_works() {
+    python3 -c 'from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey; from cryptography.hazmat.primitives.ciphers.aead import AESGCM' >/dev/null 2>&1
+}
+vendor_crypto_works() {
+    PYTHONPATH="$PREFIX/vendor${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 -c 'from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey; from cryptography.hazmat.primitives.ciphers.aead import AESGCM' >/dev/null 2>&1
+}
 
 need_root() {
     [ "$(id -u)" -eq 0 ] || die "需要管理员权限，请用 sudo sh install.sh"
@@ -75,31 +84,47 @@ fi
 say "Python：$(python3 -c 'import sys;print(sys.version.split()[0])')"
 
 # ---------------------------------------------------------------- 依赖
-# 只依赖 cryptography 一个第三方库。优先用系统自带的包 —— 信创机器常常
-# 是物理隔离的内网，pip 根本连不出去，能用的只有安装光盘里的 deb。
-if python3 -c 'import cryptography' >/dev/null 2>&1; then
+# 只依赖 cryptography 一个第三方库。优先用系统自带的包；UOS 20 实测可能
+# 没有它、没有 pip，apt 还会报「无法定位软件包」，所以完整安装包自带离线轮子。
+if crypto_works; then
     say "依赖：cryptography 已有（$(python3 -c 'import cryptography;print(cryptography.__version__)')）"
 else
-    say "依赖：缺 cryptography，尝试用系统包管理器安装…"
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get install -y python3-cryptography || true
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y python3-cryptography || true
-    elif command -v yum >/dev/null 2>&1; then
-        yum install -y python3-cryptography || true
-    elif command -v zypper >/dev/null 2>&1; then
-        zypper -n install python3-cryptography || true
-    elif command -v pacman >/dev/null 2>&1; then
-        pacman -S --noconfirm python-cryptography || true
+    OFFLINE_OK=""
+    # 这条失败时不能让 set -e 直接把脚本带走 —— 那样用户只会看到脚本无声无息
+    # 就不跑了，连是哪一步出事都看不出来。取不到就当没有离线包，往后面走。
+    OFFLINE_TAG=$(PYTHONPATH="$SRC_DIR" python3 -c \
+        'from link2pc_deps import offline_tag; print(offline_tag())' 2>/dev/null || true)
+    if [ -n "$OFFLINE_TAG" ] && [ -d "$SRC_DIR/wheels/$OFFLINE_TAG" ]; then
+        say "依赖：缺 cryptography，使用安装包里的离线依赖（$OFFLINE_TAG）…"
+        mkdir -p "$PREFIX"
+        if python3 -B "$SRC_DIR/link2pc_deps.py" --extract \
+                "$SRC_DIR/wheels" "$PREFIX/vendor" && vendor_crypto_works; then
+            OFFLINE_OK="1"
+            say "依赖：离线加密组件已装好，不需要 pip、apt 或联网"
+        fi
     fi
-    if ! python3 -c 'import cryptography' >/dev/null 2>&1; then
+
+    if [ -z "$OFFLINE_OK" ]; then
+        say "依赖：离线包不匹配或不可用，尝试用系统包管理器安装…"
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get install -y python3-cryptography || true
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y python3-cryptography || true
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y python3-cryptography || true
+        elif command -v zypper >/dev/null 2>&1; then
+            zypper -n install python3-cryptography || true
+        elif command -v pacman >/dev/null 2>&1; then
+            pacman -S --noconfirm python-cryptography || true
+        fi
+    fi
+
+    if [ -z "$OFFLINE_OK" ] && ! crypto_works && ! vendor_crypto_works; then
         say ""
-        say "还是装不上。这台机器大概是离线环境，请任选一种："
-        say "  1) 从系统安装光盘/内网源装 python3-cryptography（推荐，UOS 与麒麟都提供）"
-        say "  2) 拷一份同架构的 wheel 过来：pip3 install --no-index cryptography-*.whl"
-        die "缺 cryptography，装不了"
+        say "还是装不上。请确认使用的是完整 Linux 安装包（含 wheels/ 目录），"
+        say "或从系统安装光盘/内网源安装 python3-cryptography。"
+        die "缺 cryptography，装不了；程序不会降级成不加密传输"
     fi
-    say "依赖：已装好"
 fi
 
 # tkinter 是图形界面必需的，而且它不在 pip 里 —— 只能走系统包。
@@ -138,6 +163,9 @@ for f in $FILES; do
     fi
 done
 
+# 父目录不一定存在：极简安装的 Debian / UOS 可能压根没有 /usr/local/bin，
+# 少了这句 cat 会直接失败，后面 set -e 还会把脚本无声带走。
+mkdir -p "$(dirname "$BINLINK")" 2>/dev/null || true
 cat > "$BINLINK" <<EOF
 #!/bin/sh
 # LanSplice 启动器（由 install.sh 生成）
@@ -152,10 +180,38 @@ exec python3 -B "$PREFIX/link2pc_gui.py" "\$@"
 EOF
 chmod 755 "$BINLINK"
 
+# 文件建好了也 chmod 了，终端里却敲不出命令 —— 这是 Linux 上最让人懵的一类
+# 问题：只因为目录不在 PATH 里。信创精简安装的 root shell 常常就是这样，
+# 用户会以为软件装坏了。这里主动兜住：补进 profile.d 让新终端生效，
+# 同时给当前终端一行能直接粘的命令。
+BIN_DIR=$(dirname "$BINLINK")
+case ":$PATH:" in
+    *":$BIN_DIR:"*) : ;;
+    *)
+        say ""
+        say "注意：$BIN_DIR 不在当前 PATH 里，直接敲 lansplice 会提示找不到命令。"
+        if mkdir -p /etc/profile.d 2>/dev/null; then
+            if printf 'export PATH="$PATH:%s"\n' "$BIN_DIR" \
+                    > /etc/profile.d/lansplice.sh 2>/dev/null; then
+                chmod 644 /etc/profile.d/lansplice.sh 2>/dev/null || true
+                say "  已写入 /etc/profile.d/lansplice.sh —— 新开终端就能直接用。"
+            fi
+        fi
+        say "  想在当前这个终端立刻用，先执行："
+        say "    export PATH=\"\$PATH:$BIN_DIR\""
+        say "  （桌面图标不受影响，它写的是绝对路径。）"
+        ;;
+esac
+
 chmod 755 "$PREFIX"
 for f in $FILES; do
     [ -f "$PREFIX/$f" ] && chmod 644 "$PREFIX/$f"
 done
+[ ! -d "$PREFIX/vendor" ] || chmod -R a+rX "$PREFIX/vendor"
+
+# 装完立刻用真实入口验一次，不让「缺依赖」拖到用户双击时才暴露。
+python3 -B "$PREFIX/link2pc_cli.py" version >/dev/null 2>&1 || \
+    die "安装后启动检查失败，请运行 python3 $PREFIX/link2pc_cli.py version 查看原因"
 
 # ---------------------------------------------------------------- 桌面项
 # 有了它，应用菜单里会出现 LanSplice，双击就能开图形界面。
