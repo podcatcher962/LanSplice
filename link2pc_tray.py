@@ -18,6 +18,15 @@ Shell_NotifyIcon(NIM_ADD) -> GetMessage 循环。
 
 import os
 import sys
+
+# 托盘是纯 Windows 实现（Shell_NotifyIconW + 一个隐藏窗口的消息循环）。
+# Linux 上要过 libappindicator / StatusNotifierItem，各家桌面还不一样，
+# 麒麟和 UOS 又各有自己的补丁 —— 这一版先不做。
+# 明确抛 ImportError，让上层 try/except 干净地退到「没有托盘」的分支，
+# 而不是在一堆 ctypes 调用里半路炸掉。
+if os.name != "nt":
+    raise ImportError("link2pc_tray is Windows-only")
+
 import ctypes
 import threading
 from ctypes import wintypes
