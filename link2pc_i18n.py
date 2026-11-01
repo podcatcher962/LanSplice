@@ -1859,6 +1859,69 @@ S = {
         '共找到 %d 台',
         '%d device(s) found',
     ),
+    # ---- v1.7 接收端（serve）
+    "cli14": (
+        'LanSplice %s · 接收端',
+        'LanSplice %s · receiver',
+    ),
+    "cli15": (
+        '本机原来没有配对码，已生成并保存：%s（对端填这个）',
+        'No pairing code existed here; generated and saved: %s (use this on the peer)',
+    ),
+    "cli16": (
+        '接收目录不可用：%s',
+        'Receive folder is not usable: %s',
+    ),
+    "cli17": (
+        '端口 %d 起不来：%s（可能被别的程序占用，换 --port 试试）',
+        'Cannot listen on port %d: %s (maybe taken; try another --port)',
+    ),
+    "cli18": (
+        '监听 %s:%d',
+        'listening on %s:%d',
+    ),
+    "cli19": (
+        '  接收 %s（%s）',
+        '  receiving %s (%s)',
+    ),
+    "cli20": (
+        '  从断点 %s 继续',
+        '  resumed from %s',
+    ),
+    "cli21": (
+        '  已保存 %s（%s）',
+        '  saved %s (%s)',
+    ),
+    "cli22": (
+        '  失败 %s：%s',
+        '  failed %s: %s',
+    ),
+    "cli23": (
+        '  收到文字：%s',
+        '  text received: %s',
+    ),
+    "cli24": (
+        '接收目录 %s',
+        'receive folder %s',
+    ),
+    "cli25": (
+        '配对码 %s（对端 send 时用 --code 传这个）',
+        'pairing code %s (pass it as --code on the sender)',
+    ),
+    "cli26": (
+        '等待连接…按 Ctrl+C 结束',
+        'waiting for connections… press Ctrl+C to stop',
+    ),
+    "cli27": (
+        '共收到 %d 个文件，%s，失败 %d，时长 %.1f 秒',
+        'received %d file(s), %s, %d failed, %.1f s',
+    ),
+    "cli28": (
+        '没有参数。可用子命令：serve（当接收端）、send（发送）、'
+        'devices（找设备）、version（版本）。加 -h 看详细用法。',
+        'No arguments. Subcommands: serve (receive), send, devices, version. '
+        'Use -h for details.',
+    ),
 }
 
 LANGS = ("zh", "en")
