@@ -29,7 +29,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Windows 8.1 | ⚠️ Very likely works, not tested |
 | Windows 7 and older | ❌ Not supported |
 
-**One file, no decision to make: `LanSplice-v1.6.1.exe`.**
+**One file, no decision to make: `LanSplice-v1.7.0.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -184,6 +184,9 @@ LanSplice.exe send "D:\logs\*.log" --to 192.168.1.20
 :: scan the LAN for machines running LanSplice
 LanSplice.exe devices
 
+:: act as a receiver only (no window, just wait)
+LanSplice.exe serve --root "D:\inbox"
+
 :: version
 LanSplice.exe version
 ```
@@ -225,6 +228,38 @@ seconds a single-file exe needs to unpack meant staring at a blank screen for we
 after clicking send — indistinguishable from a hang.
 
 Launching with **no arguments at all** opens the normal GUI; nothing about the old habit changes.
+
+---
+
+## Linux / domestic (Xinchuang) systems
+
+The same code runs on Linux. This release is **command line only** — the GUI is next on the list.
+UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium / Kunpeng (ARM64),
+Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
+protocol is byte-level and does not care about the CPU.
+
+```sh
+sudo sh install.sh
+
+lansplice serve                              # receive; prints the pairing code
+lansplice send report.xlsx --to 192.168.1.20 # send to a Windows box
+lansplice devices                            # who is listening on this LAN
+```
+
+- The only third-party dependency is `cryptography`. UOS 20 and Kylin V10 ship
+  `python3-cryptography`, so **air-gapped networks need no pip at all**
+- Installed as a directory, not a single file: Kylin enables SELinux by default, and a
+  single-file binary unpacking itself into `/tmp` gets blocked
+- Config lives in `~/.config/LanSplice`; transfer history in `~/.local/share/LanSplice`
+- Open **TCP 47820** (transfers) and **UDP 47821** (discovery) in the firewall
+
+**Both machines must use the same pairing code.** `serve` prints the local one at startup —
+paste it into Windows under File → Enter pairing code, or go the other way and pass the
+Windows code with `--code`.
+
+`serve --once` exits after a single batch, which makes it usable from scripts: exit code `0`
+means something was received, `1` means nothing was. See [docs/linux.md](docs/linux.md) for
+details and troubleshooting.
 
 ---
 
@@ -440,6 +475,33 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v1.7.0** — Linux / Xinchuang: headless receiver, per-platform folders, Linux NIC enumeration
+- **`serve` subcommand**: act as a receiver without opening a window — `lansplice serve` just
+  waits. `--root` picks the destination, `--once` exits after one batch (exit `0` received,
+  `1` nothing), `--timeout` bounds the wait, `--no-discovery` turns off auto-discovery.
+  Live progress in the console and a one-line summary at the end. Available on the Windows exe
+  too, which makes it easy to drop into a scheduled task
+- **No pairing needed before first use on Linux**: when the config has no pairing code, `serve`
+  generates one, saves it to `~/.config/LanSplice/config.json` (mode 600) and prints it
+- **Folders follow the platform**: Linux uses XDG — config in `~/.config/LanSplice`, history in
+  `~/.local/share/LanSplice`. **Windows still uses `%APPDATA%\LanSplice`, so upgrades keep both
+  config and transfer history**
+- **Linux NIC enumeration**: reads addresses and netmasks through `ioctl`
+  (SIOCGIFADDR / SIOCGIFNETMASK) and computes the subnet broadcast itself, falling back to
+  parsing `ip -4 -o addr`. Previously it relied on `gethostbyname_ex(hostname)`, and on Linux
+  that usually maps only to 127.0.1.1 — so machines with docker0 / virbr0 / VPN interfaces
+  could never discover their peer
+- **`install.sh`**: checks Python ≥ 3.7, installs `python3-cryptography` via the native package
+  manager, installs to `/opt/lansplice`, creates `/usr/local/bin/lansplice`, opens ports
+  47820/47821, and supports `--uninstall`. Three pip-free routes are printed for offline hosts
+- Docs in [docs/linux.md](docs/linux.md): install, firewall, systemd autostart, troubleshooting
+- 72 new tests (three-platform folder rules, XDG edge cases, netmask-to-broadcast, parsing `ip`
+  output, a real `serve` transfer verified by SHA-256, pairing-code generation on a fresh box,
+  no Windows-only top-level imports, install script and doc essentials); checks went from 496 to
+  **568**
+- Still open: Linux GUI (P5), `.deb` packaging and per-architecture verification on real
+  hardware (P6)
 
 **v1.6.1** — see what was transferred, saved mirror jobs, send from Explorer
 - **File names in transfer history**: "2 files, 17 MB, 2 ok" never told you *which* two.
