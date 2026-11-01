@@ -3867,7 +3867,8 @@ def main():
         args = args[:i]
         drop_paths(send_paths)
 
-    if args and args[0] in ("send", "devices", "version", "-h", "--help", "help"):
+    if args and args[0] in ("send", "devices", "serve", "version",
+                            "-h", "--help", "help"):
         import link2pc_cli as CLI
         CLI._attach_console()
         try:
