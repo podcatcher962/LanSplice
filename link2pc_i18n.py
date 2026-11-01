@@ -1286,6 +1286,10 @@ S = {
         '连不上 %s:%s —— %s',
         'Cannot reach %s:%s — %s',
     ),
+    "c085": (
+        '收到聊天消息（%d 字）',
+        'Chat message received (%d chars)',
+    ),
     # ---- v1.4 托盘 / 常驻
     "g300": (
         '显示主窗口',
@@ -1859,6 +1863,114 @@ S = {
     "g440": (
         '防火墙',
         'Firewall',
+    ),
+    # ---- v1.7.3 关闭方式选择
+    "g450": (
+        '关闭 LanSplice',
+        'Close LanSplice',
+    ),
+    "g451": (
+        '要让 LanSplice 继续在后台待着吗？\n\n'
+        '· 最小化到托盘：窗口收起来，别人还能继续给你发文件，'
+        '托盘里点一下就能叫回来\n'
+        '· 彻底退出：程序完全关闭，接收端也停掉，别人就找不到你了',
+        'Keep LanSplice running in the background?\n\n'
+        '· Minimise to tray: the window hides, others can still send you files, '
+        'click the tray icon to bring it back\n'
+        '· Quit completely: the program and the receiver stop, '
+        'and others can no longer reach you',
+    ),
+    "g452": (
+        '最小化到托盘',
+        'Minimise to tray',
+    ),
+    "g453": (
+        '彻底退出',
+        'Quit completely',
+    ),
+    "g454": (
+        '记住我的选择，以后不再问',
+        "Remember my choice, don't ask again",
+    ),
+    "g455": (
+        '已缩到托盘，接收继续。',
+        'Minimised to tray; still receiving.',
+    ),
+    "g456": (
+        '设置 → 关闭窗口时，可以改回来。',
+        'You can change this later in Settings → When closing the window.',
+    ),
+    "g457": (
+        '关闭窗口时',
+        'When closing the window',
+    ),
+    "g460": (
+        "内网聊天",
+        "LAN chat",
+    ),
+    "g461": (
+        "发送",
+        "Send",
+    ),
+    "g462": (
+        "在线 %d 人",
+        "%d online",
+    ),
+    "g463": (
+        "还没人在线。同一局域网里打开 LanSplice、配对码一致的人会出现在这里。",
+        "Nobody online yet. Anyone on this LAN running LanSplice with the same pairing code shows up here.",
+    ),
+    "g464": (
+        "说点什么…（回车发送，Shift+回车换行）",
+        "Say something… (Enter to send, Shift+Enter for a new line)",
+    ),
+    "g465": (
+        "我",
+        "Me",
+    ),
+    "g466": (
+        "%s 发来消息",
+        "Message from %s",
+    ),
+    "g467": (
+        "发送失败：%s",
+        "Failed: %s",
+    ),
+    "g468": (
+        "已发给 %d 人",
+        "Sent to %d",
+    ),
+    "g469": (
+        "发送中…",
+        "Sending…",
+    ),
+    "g470": (
+        "我的显示名",
+        "My display name",
+    ),
+    "g471": (
+        "名字改了，别人看到的也是这个。",
+        "This is what others see.",
+    ),
+    "g472": (
+        "清空聊天记录",
+        "Clear chat history",
+    ),
+    "g473": (
+        "确定清空本机聊天记录吗？这个操作只影响你自己这台。",
+        "Clear the chat history on this machine? Only affects this computer.",
+    ),
+    "g474": (
+        "个设备在线",
+        "devices online",
+    ),
+    "g475": (
+        "今天",
+        "Today",
+    ),
+    "g476": (
+        "没有人可以发——先确认对方也在同一局域网、配对码一致。",
+        "Nobody to send to — make sure the others are on this LAN with the same code.",
     ),
     # ---- v1.5 命令行
     "cli01": (
