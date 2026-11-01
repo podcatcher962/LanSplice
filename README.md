@@ -230,7 +230,7 @@ LanSplice.exe version
 飞腾 / 鲲鹏（ARM64）、海光 / 兆芯（x86_64）、龙芯（LoongArch）之间照样互通 ——
 协议是字节级的，跟 CPU 架构无关。
 
-下载 **[LanSplice-v1.7.3-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-v1.7.3-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
+下载 **[LanSplice-1.7.3-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.3-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
 
 ```sh
 sudo sh install.sh
