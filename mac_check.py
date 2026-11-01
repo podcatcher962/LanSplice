@@ -186,13 +186,37 @@ def main():
     got = {}
     for mod in ("link2pc_core", "link2pc_paths", "link2pc_platform",
                 "link2pc_history", "link2pc_deps", "link2pc_i18n",
-                "link2pc_web", "link2pc_cli"):
+                "link2pc_web", "link2pc_cli",
+                # 聊天（v1.7.3 加的）。GUI 里是 try/except 导入的，
+                # 缺了不报错、只是「没有聊天」—— 所以单独查一遍。
+                "link2pc_chat", "link2pc_chatwin"):
         sys.modules.pop(mod, None)
         try:
             got[mod] = __import__(mod)
             ok(mod)
         except Exception as ex:
             bad(mod, "%s" % ex)
+
+    # 聊天逻辑真跑一遍：造一条消息、进成员表、存一条历史再读回来。
+    # 这比「import 成功」有用得多 —— 模块能导入但逻辑坏了，一样是坏的。
+    CH = got.get("link2pc_chat")
+    if CH is None:
+        skp("聊天逻辑", "模块没导进来")
+    else:
+        try:
+            m = CH.make_msg("自检消息", "selfcheck")
+            assert m.get("body") == "自检消息", m
+            r = CH.Roster()
+            r.update({"name": "本机", "port": 47820, "ip": "127.0.0.1"})
+            assert r.online(), "成员表没记上"
+            tmp = os.path.join(tmpbase, "chat-test.jsonl")
+            st = CH.ChatStore(tmp)
+            st.append(m)
+            got_msg = st.recent(1)
+            assert got_msg and got_msg[0]["body"] == "自检消息", got_msg
+            ok("聊天逻辑：造消息 / 成员表 / 存取历史", "一条消息往返正常")
+        except Exception as ex:
+            bad("聊天逻辑", "%s: %s" % (type(ex).__name__, ex))
 
     sec("5. 数据目录（~/Library/Application Support）")
     try:
