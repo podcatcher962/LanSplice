@@ -29,7 +29,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Windows 8.1 | ⚠️ Very likely works, not tested |
 | Windows 7 and older | ❌ Not supported |
 
-**One file, no decision to make: `LanSplice-v1.5.2.exe`.**
+**One file, no decision to make: `LanSplice-v1.6.0.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -409,6 +409,22 @@ An exe produced by 32-bit Python runs on both 32- and 64-bit Windows.
 ---
 
 ## Changelog
+
+**v1.6.0** — stability wrap-up: one instance, firewall re-allow, transfer history
+- **Only one instance runs**: double-clicking twice no longer starts two processes fighting over
+  the same port (both used to "start fine", and where a file landed was a coin toss). A second
+  launch brings the existing window to the front; autostart colliding with a running copy exits
+  quietly. The command line is unaffected
+- **Upgrading no longer loses the firewall rule**: Windows binds rules to the full exe path, so
+  `v1.5.2.exe` → `v1.6.0.exe` is a different path and the old rule does not cover it — the usual
+  cause of "it worked yesterday". Startup now checks whether the rule points at this build and
+  offers a one-click re-allow (asked once per version)
+- **Transfer history**: File → Transfer history…, recording time, peer, file count, size and
+  outcome for every send and receive. A failed entry can be re-queued with "Resend"
+- Stored in `%APPDATA%\LanSplice\history.jsonl`, one line per entry, capped at 500; a corrupted
+  line loses only that line
+- 31 new tests (history IO/pruning/tolerance, three-state firewall check, single-instance lock,
+  history window); automated checks 391 → **428**
 
 **v1.5.2** — bigger type on the phone page
 - **One step larger**: body text 16 → 19px, secondary text 13 → 15px, the title 20 → 26px.
