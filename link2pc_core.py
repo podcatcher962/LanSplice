@@ -60,7 +60,7 @@ MAGIC = b"L2P1"
 # 版本号只在这里写一次。
 # 以前图形界面和命令行各写一份，升级时忘了改其中一处，
 # 就会出现「窗口标题 1.5.0、命令行 version 1.4.0」这种自相矛盾。
-APP_VER = "1.7.2"
+APP_VER = "1.7.3"
 
 DISCOVERY_PORT = 47821
 ANNOUNCE_EVERY = 8             # 秒。接收端隔这么久主动宣告一次自己
@@ -1054,6 +1054,9 @@ class PeerServer(threading.Thread):
         if t == "text":
             return self._do_text(ch, msg)
 
+        if t == "chat":
+            return self._do_chat(ch, msg)
+
         if t == "stat":
             return self._do_stat(ch, msg)
 
@@ -1095,6 +1098,39 @@ class PeerServer(threading.Thread):
         self.notify("recv_text", {"body": body,
                                   "from": msg.get("from") or "",
                                   "clip": bool(msg.get("clip"))})
+        ch.send_json({"t": "ok"})
+        return True
+
+    def _do_chat(self, ch, msg):
+        """
+        收到一条聊天消息。
+
+        core 层只负责校验和转交，不碰存储 —— 存哪里、怎么显示是上层的事。
+        这样 core 不必反过来 import 聊天模块，也就没有循环依赖。
+
+        注意：日志只记长度不记正文，理由同 _do_text。
+        """
+        # 聊天消息装在 "msg" 里（外层是本帧的 {"t": "chat"}）。
+        # 也接受字段平铺的写法，免得以后改协议时两边对不上。
+        inner = msg.get("msg")
+        if not isinstance(inner, dict):
+            inner = msg
+        body = inner.get("body")
+        if not isinstance(body, str) or not body.strip():
+            ch.send_json({"t": "error", "msg": _t("c064")})
+            return True
+        if len(body.encode("utf-8")) > MAX_TEXT:
+            ch.send_json({"t": "error", "msg": _t("c061") % (MAX_TEXT // 1024)})
+            return True
+        self.log(_t("c085") % len(body))
+        self.notify("chat_msg", {"msg": {
+            "id": str(inner.get("id") or ""),
+            "from": str(inner.get("from") or ""),
+            "body": body[:4000],
+            "ts": float(inner.get("ts") or time.time()),
+            "to": str(inner.get("to") or ""),
+            "re": str(inner.get("re") or ""),
+        }})
         ch.send_json({"t": "ok"})
         return True
 
