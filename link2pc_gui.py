@@ -12,10 +12,8 @@ import time
 import socket
 import queue
 import base64
-import ctypes
 import threading
 import subprocess
-from ctypes import wintypes
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -31,6 +29,7 @@ except Exception:
 import link2pc_core as L
 import link2pc_history as HIST
 import link2pc_i18n as I18N
+import link2pc_platform as P          # v1.7.1：系统差异全收在那一层
 from link2pc_i18n import t as _t
 
 try:
@@ -52,102 +51,77 @@ APP_TITLE = "LanSplice · 双机直传"
 APP_VER = L.APP_VER          # 唯一来源在 core，别在这里再写死一份
 COPYRIGHT = "© 永远的兰兰"
 
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
 # ---------------------------------------------------------------- 单实例
 
 # 命名互斥量：同一台机器、同一个登录会话里只允许一个图形界面。
 # 用 Local\ 而不是 Global\ —— 两个 Windows 用户各开一个互不干扰。
+# Linux 上这个名字会被转成 /tmp/lansplice-Local_LanSplice-SingleInstance.lock
 MUTEX_NAME = "Local\\LanSplice-SingleInstance"
-ERROR_ALREADY_EXISTS = 183
-_mutex_handle = None
 
 
 def single_instance_acquire(name=MUTEX_NAME):
     """
     抢单实例锁。第一个进场的返回 True，后来者返回 False。
 
-    为什么必须有：双击两次会出现两个进程抢同一个 47820 端口。
-    Windows 允许 SO_REUSEADDR 二次绑定，于是两边都"启动成功"，
-    但接收到底落在哪个进程是不确定的 —— 这就是「传了没反应」的经典成因。
+    具体怎么做（命名互斥量还是 flock）交给 platform 层：
+    Windows 用 CreateMutexW，Linux/macOS 用 fcntl.flock —— 后者是内核锁，
+    进程一死自动释放，不会留下「上次没退干净」的死锁文件。
 
     失败时一律放行（返回 True）：拿不到锁总比打不开程序强。
     """
-    global _mutex_handle
-    if os.name != "nt":
-        return True
-    try:
-        k32 = ctypes.windll.kernel32
-        k32.CreateMutexW.restype = wintypes.HANDLE
-        k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL,
-                                     wintypes.LPCWSTR]
-        k32.GetLastError.restype = wintypes.DWORD
-        h = k32.CreateMutexW(None, False, name)
-        if not h:
-            return True
-        if k32.GetLastError() == ERROR_ALREADY_EXISTS:
-            k32.CloseHandle(h)
-            return False
-        _mutex_handle = h          # 故意不关：进程活着就一直持有
-        return True
-    except Exception:
-        return True
+    return P.single_instance(name)
 
 
 def _tk_windows():
-    """枚举标题以 LanSplice 开头的 Tk 顶层窗口 [(hwnd, 是否可见)]。"""
-    u = ctypes.windll.user32
-    out = []
-    EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    """
+    枚举本程序已经开着的窗口。
 
-    def _cb(hwnd, _lp):
-        try:
-            cb = ctypes.create_unicode_buffer(256)
-            if not u.GetClassNameW(hwnd, cb, 256):
-                return True
-            if cb.value != "TkTopLevel":
-                return True
-            n = u.GetWindowTextLengthW(hwnd)
-            if n <= 0:
-                return True
-            tb = ctypes.create_unicode_buffer(n + 1)
-            u.GetWindowTextW(hwnd, tb, n + 1)
-            if tb.value.startswith(APP_NAME):
-                out.append((hwnd, bool(u.IsWindowVisible(hwnd))))
-        except Exception:
-            pass
-        return True
-
+    Windows 上返回 [(hwnd, 是否可见)]；其他系统这个 API 不存在，
+    返回空列表 —— 调用方 focus_existing() 会据此走「提示已经在跑」的分支。
+    """
+    if not P.IS_WIN:
+        return []
     try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        out = []
+        EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND,
+                                      wintypes.LPARAM)
+
+        def _cb(hwnd, _lp):
+            try:
+                cb = ctypes.create_unicode_buffer(256)
+                if not u.GetClassNameW(hwnd, cb, 256):
+                    return True
+                if cb.value != "TkTopLevel":
+                    return True
+                n = u.GetWindowTextLengthW(hwnd)
+                if n <= 0:
+                    return True
+                tb = ctypes.create_unicode_buffer(n + 1)
+                u.GetWindowTextW(hwnd, tb, n + 1)
+                if tb.value.startswith(APP_NAME):
+                    out.append((hwnd, bool(u.IsWindowVisible(hwnd))))
+            except Exception:
+                pass
+            return True
+
         u.EnumWindows(EnumProc(_cb), 0)
+        return out
     except Exception:
-        pass
-    return out
+        return []
 
 
 def focus_existing():
     """
     把已经在跑的那个窗口提到前面。
 
-    缩到托盘时窗口是 withdraw 状态（不可见但仍存在），
+    Windows：缩到托盘时窗口是 withdraw 状态（不可见但仍存在），
     所以优先挑可见的；一个可见的都没有，就把那个隐藏的 show 出来。
+    Linux：靠 wmctrl / xdotool，没装就返回 False（不报错）。
     """
-    wins = _tk_windows()
-    if not wins:
-        return False
-    vis = [h for h, v in wins if v]
-    hwnd = (vis or [wins[0][0]])[0]
-    try:
-        u = ctypes.windll.user32
-        if not vis:
-            # 缩在托盘里的是 withdraw 状态：SW_RESTORE 对它不一定生效，
-            # 先 SW_SHOW(5) 把它显出来，再恢复并抢焦点
-            u.ShowWindow(hwnd, 5)
-        u.ShowWindow(hwnd, 9)          # SW_RESTORE
-        u.SetForegroundWindow(hwnd)
-        return True
-    except Exception:
-        return False
+    return P.focus_existing()
 
 
 # ---------------------------------------------------------------- 配色
@@ -165,73 +139,25 @@ C_RED = "#c62828"
 C_GRAY = "#90a4ae"
 C_WHITE = "#ffffff"
 
-FONT = "Microsoft YaHei UI"
+FONT = "Microsoft YaHei UI"       # 实际值在启动时由 pick_font() 重新选定
 
 # ---------------------------------------------------------------- 剪贴板里的文件
-
-CF_HDROP = 15          # 资源管理器「复制文件」用的剪贴板格式
 
 
 def clipboard_file_paths():
     """
-    取剪贴板里被复制的**文件/文件夹**路径（Windows CF_HDROP）。
-    复制的是普通文字时返回空列表 —— 调用方据此判断要不要接管这次粘贴。
+    取剪贴板里被复制的**文件/文件夹**路径。
+
+    Windows 走 CF_HDROP（资源管理器「复制」时放的就是这个格式）；
+    其他系统暂时返回空 —— 调用方会把它当作「复制的是普通文字」，
+    只是不做那个接管粘贴的花活，不影响别的功能。
     """
-    if os.name != "nt":
-        return []
-    try:
-        u = ctypes.windll.user32
-        s = ctypes.windll.shell32
-        u.OpenClipboard.argtypes = [wintypes.HWND]
-        u.OpenClipboard.restype = wintypes.BOOL
-        u.GetClipboardData.argtypes = [wintypes.UINT]
-        u.GetClipboardData.restype = wintypes.HANDLE
-        u.CloseClipboard.restype = wintypes.BOOL
-        s.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT,
-                                     wintypes.LPWSTR, wintypes.UINT]
-        s.DragQueryFileW.restype = wintypes.UINT
-    except Exception:
-        return []
-
-    opened = False
-    for _ in range(6):                     # 剪贴板可能被别的程序占着一瞬间
-        if u.OpenClipboard(None):
-            opened = True
-            break
-        time.sleep(0.03)
-    if not opened:
-        return []
-
-    out = []
-    try:
-        h = u.GetClipboardData(CF_HDROP)
-        if not h:
-            return out
-        n = s.DragQueryFileW(h, 0xFFFFFFFF, None, 0)
-        if not n or n > 4096:
-            return out
-        buf = ctypes.create_unicode_buffer(32768)
-        for i in range(n):
-            if s.DragQueryFileW(h, i, buf, 32768):
-                out.append(buf.value)
-    except Exception:
-        return out
-    finally:
-        try:
-            u.CloseClipboard()
-        except Exception:
-            pass
-    return out
+    return P.clipboard_file_paths()
 
 
 def default_lang():
-    """默认跟系统走：中文 Windows 用中文，其他用英文。"""
-    try:
-        import ctypes
-        langid = ctypes.windll.kernel32.GetSystemDefaultUILanguage()
-        return "zh" if (langid & 0x3FF) == 0x04 else "en"
-    except Exception:
-        return "zh"
+    """默认跟系统走：中文环境用中文，其他用英文。"""
+    return P.default_lang()
 
 
 def cfg_path():
@@ -268,9 +194,7 @@ def load_cfg():
     if not d.get("pair_key"):
         d["pair_key"] = base64.b64encode(L.new_pair_key()).decode()
     if not d.get("recv_root"):
-        cand = "E:\\_xfer"
-        d["recv_root"] = cand if os.path.isdir(os.path.dirname(cand) or "E:\\") else \
-            os.path.join(os.path.expanduser("~"), _t("g003"))
+        d["recv_root"] = P.default_recv_root(_t("g003"))
     d.setdefault("tcp_port", L.TCP_PORT)
     d.setdefault("peer_ip", "")
     d.setdefault("peer_port", L.TCP_PORT)
@@ -290,46 +214,18 @@ def load_cfg():
 
 
 def autostart_cmd():
-    """
-    写进注册表的那条命令。
-
-    打包后是 exe 自己带 --min（启动即缩托盘，不弹窗打断开机）；
-    源码运行时是 python + 脚本路径 —— 调试时也能用，不用手工改注册表。
-    """
-    if getattr(sys, "frozen", False):
-        return '"%s" --min' % sys.executable
-    return '"%s" "%s" --min' % (
-        sys.executable, os.path.abspath(__file__))
+    """开机要执行的那条命令（写注册表或 .desktop 都用它）。"""
+    return P.autostart_cmd()
 
 
 def autostart_get():
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-            v, _ = winreg.QueryValueEx(k, APP_NAME)
-        return bool(v)
-    except Exception:
-        return False
+    """当前是否已设为开机自启。Windows 读注册表，Linux 看 autostart 目录。"""
+    return P.autostart_get()
 
 
 def autostart_set(on):
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                            winreg.KEY_SET_VALUE) as k:
-            if on:
-                winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ,
-                                  autostart_cmd())
-            else:
-                try:
-                    winreg.DeleteValue(k, APP_NAME)
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    pass
-        return True
-    except Exception:
-        return False
+    """开 / 关开机自启。返回是否成功。"""
+    return P.autostart_set(on)
 
 
 def save_cfg(d):
@@ -454,7 +350,15 @@ def _reg_del_tree(root, path):
 
 
 def shell_menu_set(on):
-    """在 HKCU 下挂/摘右键菜单。只改当前用户，不需要管理员。"""
+    """
+    在 HKCU 下挂/摘右键菜单。只改当前用户，不需要管理员。
+
+    Linux 上右键菜单是一套完全不同的东西（Nautilus 脚本 / KIO 服务菜单 /
+    .desktop 的 Actions），各家文件管理器还不一样 —— 这一版不做，
+    直接返回 False，界面上那个勾选项本来就不会出现。
+    """
+    if not P.IS_WIN:
+        return False
     try:
         import winreg
         for key in SHELL_KEYS:
@@ -477,6 +381,8 @@ def shell_menu_set(on):
 
 
 def shell_menu_get():
+    if not P.IS_WIN:
+        return False
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
@@ -719,9 +625,12 @@ class App:
                             command=self._save_opts)
         stm.add_checkbutton(label=_t("g351"), variable=self.var_sound,
                             command=self._save_opts)
-        stm.add_checkbutton(label=_t("g352"), variable=self.var_tray,
-                            command=self._save_opts)
-        stm.add_separator()
+        # 「关窗缩到托盘」只在有托盘的系统上才有意义；
+        # Linux 上没有托盘，关窗就是退出，这条留着会让用户以为能常驻
+        if P.tray_supported() and HAS_TRAY:
+            stm.add_checkbutton(label=_t("g352"), variable=self.var_tray,
+                                command=self._save_opts)
+            stm.add_separator()
         stm.add_checkbutton(label=_t("g331"), variable=self.var_verify,
                             command=self._save_toggles)
         stm.add_checkbutton(label=_t("g330"), variable=self.var_clipauto,
@@ -729,10 +638,15 @@ class App:
         stm.add_separator()
         stm.add_checkbutton(label=_t("g353"), variable=self.var_boot,
                             command=self._toggle_boot)
-        stm.add_separator()
-        self.var_shell = tk.BooleanVar(value=shell_menu_get())
-        stm.add_checkbutton(label=_t("g423"), variable=self.var_shell,
-                            command=self._toggle_shell_menu)
+        # 资源管理器右键菜单是 Windows 专有（HKCU）。Linux 上同理不显示，
+        # 免得勾了没反应 —— 那比没有这一项更让人困惑。
+        if P.IS_WIN:
+            stm.add_separator()
+            self.var_shell = tk.BooleanVar(value=shell_menu_get())
+            stm.add_checkbutton(label=_t("g423"), variable=self.var_shell,
+                                command=self._toggle_shell_menu)
+        else:
+            self.var_shell = tk.BooleanVar(value=False)
         stm.add_separator()
         stm.add_command(label=_t("g355"), command=self.open_cfg_folder)
         m.add_cascade(label=_t("g354"), menu=stm)
@@ -807,7 +721,11 @@ class App:
         self._mk_btn(qb, _t("g038"), self.set_recv_root, C_BLUE, width=7).pack(side="left", padx=(0, 4))
         self._mk_btn(qb, _t("g039"), self.open_recv_root, "#607d8b", width=6).pack(side="left")
 
-        self.btn_fw = self._mk_btn(qb, _t("g040"), self.fw_dialog, "#e65100", width=14)
+        # 按钮一开始就写对：Linux 上没有「一键」，只有「把命令给你」。
+        # 等线程回来再改文字的话，开机那一两秒是误导的。
+        self.btn_fw = self._mk_btn(
+            qb, _t("g433") if not P.IS_WIN else _t("g040"),
+            self.fw_dialog, "#e65100", width=14)
         self.btn_fw.pack(side="right", padx=(6, 14))
         self.lbl_fw = tk.Label(qb, text=_t("g041"), bg="#e2e8ec", fg=C_SUB,
                                font=(FONT, 9, "bold"))
@@ -1693,10 +1611,7 @@ class App:
                 lab.config(text=_t("g364"), fg=C_GREEN)
 
         def do_open():
-            try:
-                os.startfile(url)
-            except Exception:
-                pass
+            P.open_url(url)
 
         self._mk_btn(bar, _t("g368"), do_open, "#607d8b",
                      width=None).pack(side="right", padx=(6, 0))
@@ -2121,10 +2036,9 @@ class App:
             return
         for k, v in self.rows.items():
             if v == sel[0]:
-                if os.path.isfile(k):
-                    subprocess.Popen(["explorer", "/select,", k])
-                elif os.path.isdir(k):
-                    subprocess.Popen(["explorer", k])
+                # 双击：在文件管理器里把它选出来（Windows 是 /select，
+                # Linux 是 nautilus --select，都做不到就打开父目录）
+                P.reveal_path(k)
                 break
 
     # ------------------------------------------------------------ 发送
@@ -2651,11 +2565,8 @@ class App:
         def open_root(e):
             path = (e or {}).get("root") or self.cfg.get("recv_root") or ""
             if path and os.path.isdir(path):
-                try:
-                    os.startfile(path)
+                if P.open_path(path):
                     return
-                except Exception:
-                    pass
             self.open_recv_root()
 
         def do_open():
@@ -2855,10 +2766,29 @@ class App:
     # ------------------------------------------------------------ 防火墙状态
 
     def _refresh_fw_status(self):
+        if not P.IS_WIN:
+            # Linux 上没什么可「检测」的：读规则要 root，工具各家不同。
+            # 直接把该说的话摆在状态条上，不绕线程也不显示「检测中…」——
+            # 那个「检测中」在 Linux 上永远转不出结果。
+            tool = P.firewall_tool()
+            txt = (_t("g432") % tool) if tool else _t("g433")
+            self.lbl_fw.config(text="● " + txt, fg=C_BLUE)
+            self.btn_fw.config(text=_t("g433"))
+            return
         self.lbl_fw.config(text=_t("g041"), fg=C_SUB)
         threading.Thread(target=self._fw_status_worker, daemon=True).start()
 
     def _fw_status_worker(self):
+        # Linux：不跑 PowerShell，也不假装知道防火墙开没开。
+        # 只有 root 才能读规则，各发行版工具还不一样 ——
+        # 与其显示一个绿点骗人，不如老老实实说「请手动放行」。
+        if not P.IS_WIN:
+            tool = P.firewall_tool()
+            if tool:
+                self.events.put(("fw_status", ("manual", _t("g432") % tool)))
+            else:
+                self.events.put(("fw_status", ("manual", _t("g433"))))
+            return
         # 规则查询本身要 3~4 秒（PowerShell 启动 + 遍历规则），
         # 所以把网络类别和规则合并成一次调用，别让状态灯一直停在"检测中"。
         # PROG 那两行是 v1.6.0 加的：只有「规则里绑的 exe」才说明这版被放行。
@@ -3053,7 +2983,7 @@ class App:
 
     def open_recv_root(self):
         os.makedirs(self.cfg["recv_root"], exist_ok=True)
-        subprocess.Popen(["explorer", self.cfg["recv_root"]])
+        P.open_path(self.cfg["recv_root"])
 
     # ------------------------------------------------------------ 配对码
 
@@ -3222,7 +3152,79 @@ class App:
         if messagebox.askyesno(_t("g384"), _t("g385") % APP_VER, parent=self.root):
             self.fw_dialog(quick=True)
 
+    def _fw_linux_dialog(self):
+        """
+        Linux 上的「防火墙」窗口：不自动改，只给一条按本机情况挑好的命令。
+
+        为什么不弹 pkexec 替用户执行：改防火墙要 root，各发行版工具不同，
+        pkexec 在麒麟/UOS 上的授权代理不一定装、装了行为也不一样。
+        与其做一个三成概率失败还要背锅的「一键」，不如把命令写清楚。
+        """
+        cmd = P.firewall_manual_command()
+        win = tk.Toplevel(self.root)
+        win.title(_t("g440"))
+        win.configure(bg=C_BG)
+        win.geometry("640x330")
+        win.minsize(560, 300)
+        win.transient(self.root)
+
+        tk.Label(win, text=_t("g436"), bg=C_BG, fg=C_TEXT, font=(FONT, 9),
+                 justify="left", anchor="w", wraplength=580).pack(
+            anchor="w", padx=18, pady=(16, 10))
+
+        if not cmd:
+            # 没有防火墙工具：多半是不需要放行，把话说清楚别让人瞎找
+            tk.Label(win, text=_t("g438"), bg=C_BG, fg=C_SUB, font=(FONT, 9),
+                     justify="left", anchor="w", wraplength=580).pack(
+                anchor="w", padx=18)
+        else:
+            box = tk.Frame(win, bg=C_WHITE, highlightthickness=1,
+                           highlightbackground=C_LINE)
+            box.pack(fill="x", padx=18, pady=4)
+            ent = tk.Entry(box, font=("Consolas", 10), bd=0, bg=C_WHITE,
+                           fg=C_TEXT, readonlybackground=C_WHITE)
+            ent.insert(0, cmd)
+            ent.config(state="readonly")
+            ent.pack(fill="x", padx=8, pady=8)
+
+            tip = tk.Label(win, text="", bg=C_BG, fg=C_GREEN, font=(FONT, 8))
+
+            def do_copy():
+                if self._set_clipboard(cmd):
+                    tip.config(text="✓ " + _t("g435"))
+
+            row = tk.Frame(win, bg=C_BG)
+            row.pack(anchor="w", padx=18, pady=(10, 0))
+            tk.Button(row, text=_t("g434"), command=do_copy, bg=C_BLUE,
+                      fg=C_WHITE, relief="flat", cursor="hand2",
+                      font=(FONT, 9), padx=12, pady=5).pack(side="left")
+            tip.pack(in_=row, side="left", padx=10)
+
+        # 不 pack 到 bottom —— 那会在中间留一大片空白。
+        # 紧跟内容往下排，窗口再按实际需要收缩。
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=18, pady=(20, 14))
+        self._mk_btn(bar, _t("g437"), self._refresh_fw_status, C_GRAY,
+                     width=None).pack(side="left")
+        self._mk_btn(bar, _t("g406"), win.destroy, C_GRAY,
+                     width=None).pack(side="right")
+
+        # 内容多少跟本机装了几套防火墙工具有关（没装就没有命令框），
+        # 写死高度会剩一大片空白或者把按钮挤出去。
+        # 这里直接量「最后一排按钮的下沿」，比 reqheight 准 ——
+        # reqheight 会把 pack 时留下的间距也算进去，出来总是偏高。
+        try:
+            win.update_idletasks()
+            bottom = bar.winfo_y() + bar.winfo_height()
+            if bottom > 120:
+                win.geometry("640x%d" % (bottom + 12))
+        except Exception:
+            win.geometry("640x384")
+
     def fw_dialog(self, auto_private=False, quick=False):
+        if not P.IS_WIN:
+            self._fw_linux_dialog()
+            return
         port = int(self.cfg["tcp_port"])
         if not quick:
             cats = self._net_categories()
@@ -3612,8 +3614,12 @@ class App:
         elif kind == "fw_status":
             state, txt = data
             ok = (state is True)
-            self.lbl_fw.config(text="● " + txt, fg=(C_GREEN if ok else C_RED))
-            self.btn_fw.config(text=(_t("g236") if ok else _t("g040")))
+            manual = (state == "manual")
+            self.lbl_fw.config(text="● " + txt,
+                               fg=(C_GREEN if ok else
+                                   (C_BLUE if manual else C_RED)))
+            self.btn_fw.config(text=(_t("g236") if ok else
+                                     (_t("g433") if manual else _t("g040"))))
             if state == "stale":
                 self._offer_reallow()
         elif kind == "file_start":
@@ -3829,12 +3835,39 @@ class App:
         self.root.destroy()
 
 
-def _run():
+def _apply_font(root):
+    """
+    挑一个这台机器上真有的中文字体。
+
+    Windows 是微软雅黑；Linux 上大概率是 Noto Sans CJK，老一点的信创机
+    可能是文泉驿。硬写「Microsoft YaHei UI」的话，Tk 会抱着一个不存在的
+    字体名去找替代，中文常常掉成方框。
+
+    非 Windows 上还要顺手改掉 Tk 的几个具名字体（TkDefaultFont 等）——
+    ttk 的表格、菜单、对话框走的是那几个名字，只改 FONT 变量管不到它们，
+    结果就是主窗口中文正常、菜单里全是方框。
+
+    Windows 上不动具名字体：那边默认就是雅黑，改了反而可能让老用户
+    觉得字号或行距变了。
+    """
+    global FONT
     try:
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        import tkinter.font as tkfont
+        FONT = P.pick_font(tkfont.families(root), fallback=FONT)
+        if not P.IS_WIN:
+            for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont",
+                         "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont"):
+                try:
+                    tkfont.nametofont(name).configure(family=FONT)
+                except Exception:
+                    pass
     except Exception:
         pass
+    return FONT
+
+
+def _run():
+    P.enable_dpi_awareness()
 
     global HAS_DND
     root = None
@@ -3846,9 +3879,11 @@ def _run():
             root = None
     if root is None:
         root = tk.Tk()
+    _apply_font(root)
     app = App(root)
-    # --min：开机自启时直接缩到托盘，不弹窗打断开机
-    if "--min" in sys.argv:
+    # --min：开机自启时直接缩到托盘，不弹窗打断开机。
+    # 没有托盘的平台（Linux）不能这么干 —— 缩进去就再没人叫得出来了。
+    if "--min" in sys.argv and P.tray_supported() and HAS_TRAY:
         root.after(700, app.hide_window)
     root.mainloop()
 
