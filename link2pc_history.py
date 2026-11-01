@@ -20,7 +20,35 @@ import json
 import threading
 
 MAX_ENTRIES = 500
+MAX_NAMES = 40          # 每条记录最多留这么多个文件名，够看清传了什么
+MAX_NAME_LEN = 90
 _LOCK = threading.Lock()
+
+
+def disp_name(p):
+    """
+    把任意路径压成一个显示用的名字。
+
+    对端给的路径可能是 "sub/dir/a.txt" 也可能是 "D:\\\\a\\\\b.txt"，
+    这里两种分隔符都认；Linux 上打出来的路径也要认得。
+    """
+    s = str(p or "").strip()
+    if not s:
+        return ""
+    s = s.replace("\\", "/").rstrip("/")
+    return s.rsplit("/", 1)[-1]
+
+
+def clean_names(seq, limit=MAX_NAMES):
+    """名字清单只留这么多、每个只留这么长 —— 历史文件不该被一个超长名字撑爆。"""
+    out = []
+    for n in (seq or []):
+        n = str(n or "")[:MAX_NAME_LEN]
+        if n:
+            out.append(n)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def hist_path(cfg_dir=None):
@@ -31,12 +59,15 @@ def hist_path(cfg_dir=None):
 
 
 def make_entry(direction, peer="", ip="", port=0, files=0, nbytes=0,
-               ok=0, fail=0, skip=0, root="", src=None, err=""):
+               ok=0, fail=0, skip=0, root="", src=None, err="",
+               names=None, bad=None):
     """
     组装一条记录。
 
     direction: "out" 本机发出 / "in" 本机收到
     src:       本次涉及的本地路径（发出时用来「一键重发」）
+    names:     本次传的文件显示名，**界面上「内容」那一列就靠它**
+    bad:       失败项 [[名字, 原因], …]，详情窗口里逐条列出来
     """
     return {
         "t": __import__("time").time(),
@@ -52,7 +83,29 @@ def make_entry(direction, peer="", ip="", port=0, files=0, nbytes=0,
         "root": root or "",
         "src": list(src or []),
         "err": err or "",
+        "names": clean_names([disp_name(n) for n in (names or [])]),
+        "bad": [[str(b[0])[:MAX_NAME_LEN], str(b[1])[:160]]
+                for b in (bad or []) if b][:20],
     }
+
+
+def entry_names(e):
+    """
+    取一条记录的文件名清单。
+
+    v1.6.0 的老记录没有 names 字段，只能从 src 的最后一段倒推 ——
+    这样升级前传过的东西，历史里也照样看得见名字。
+    """
+    e = e or {}
+    names = [n for n in (e.get("names") or []) if n]
+    if names:
+        return names
+    out = []
+    for p in (e.get("src") or []):
+        n = disp_name(p)
+        if n:
+            out.append(n)
+    return clean_names(out)
 
 
 def append(entry, cfg_dir=None):
