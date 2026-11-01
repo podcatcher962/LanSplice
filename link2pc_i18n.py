@@ -1563,22 +1563,23 @@ S = {
     ),
     # ---- v1.6 单实例 / 防火墙重放行 / 传输历史
     "g383": (
-        '规则绑的是旧版本，本版可能被拦',
-        'Rule points at an older exe — this build may be blocked',
+        '防火墙没放行这一版',
+        'Firewall does not allow this build',
     ),
     "g384": (
         '换了新版本，防火墙要重新放行',
         'New version — the firewall rule needs updating',
     ),
     "g385": (
-        'Windows 的防火墙规则是按 exe 的完整路径记的。\n\n'
-        '现在是 v%s，路径和上一版不一样，旧规则管不到它 —— '
-        '这正是「昨天还好的，今天连不上」的常见原因。\n\n'
-        '要现在重新放行吗？（只改本机的入站规则，只对局域网地址开放）',
-        'Windows firewall rules are bound to the full path of the exe.\n\n'
-        'You are now on v%s, a different path from the previous build, so the old '
-        'rule no longer covers it — a common cause of "it worked yesterday".\n\n'
-        'Re-allow it now? (inbound only, LAN addresses only)',
+        '这台机器上现有的防火墙规则，没有一条能放行当前版本（v%s）。\n\n'
+        '可能是还没放行过，可能规则指向旧版本，也可能被安全软件清掉了。\n\n'
+        '要现在重新整理一遍吗？只会改动本软件的入站规则，并且只对内网来源开放。',
+        'None of the existing firewall rules on this machine allows the current '
+        'build (v%s).\n\n'
+        'It may never have been allowed, the rules may point at an older version, '
+        'or a security suite removed them.\n\n'
+        'Recreate them now? This only touches LanSplice inbound rules and only '
+        'opens them to LAN sources.',
     ),
     "g386": (
         '传输历史…',
@@ -1971,6 +1972,30 @@ S = {
     "g476": (
         "没有人可以发——先确认对方也在同一局域网、配对码一致。",
         "Nobody to send to — make sure the others are on this LAN with the same code.",
+    ),
+    "g477": (
+        "规则没有生效。\n\n"
+        "刚才的脚本执行完了，但复查发现仍然没有一条规则能放行这一版。\n\n"
+        "常见原因：\n"
+        "· UAC 窗口被取消，或者点了「否」\n"
+        "· 公司/学校的域策略统一推送防火墙规则，本机改不动\n"
+        "· 装的是第三方安全软件，它接管了防火墙\n\n"
+        "可以再点一次「一键放行」。如果是域策略或第三方安全软件，"
+        "需要管理员放行 TCP %d 与 UDP %d（仅内网来源）。",
+        "The rules did not take effect.\n\n"
+        "The script ran, but a re-check found no rule that actually allows this "
+        "version.\n\n"
+        "Common causes://n"
+        "· The UAC prompt was cancelled or answered with No\n"
+        "· A domain policy pushes firewall rules and overrides local ones\n"
+        "· A third-party security suite manages the firewall\n\n"
+        "You can run the one-click allow again. If it is a domain policy or a "
+        "security suite, ask an administrator to allow TCP %d and UDP %d "
+        "(LAN sources only).",
+    ),
+    "g478": (
+        "防火墙规则没生效，点灯重试",
+        "Firewall rules did not apply; click the light to retry",
     ),
     # ---- v1.5 命令行
     "cli01": (
