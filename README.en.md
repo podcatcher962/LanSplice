@@ -28,8 +28,11 @@ Author: © Lanlan Eternal (永远的兰兰)
 | **Windows 10** (32-bit / 64-bit) | ✅ Supported — main dev & test environment |
 | Windows 8.1 | ⚠️ Very likely works, not tested |
 | Windows 7 and older | ❌ Not supported |
+| **UOS / Kylin V10 / Deepin / Ubuntu** | ✅ Supported (GUI + CLI), see [docs/linux.md](docs/linux.md) |
+| Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
+| macOS | ❌ No native build; browser mode only ([docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v1.7.0.exe`.**
+**One file, no decision to make: `LanSplice-v1.7.1.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -475,6 +478,28 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v1.7.1** — a real window on Linux / Xinchuang
+- **The GUI runs on Linux now**: `lansplice` with no arguments opens the window;
+  with `serve` / `send` / `devices` it stays on the command line. The installer drops a
+  "LanSplice" entry into the application menu
+- **Every OS difference now lives in `link2pc_platform.py`**: autostart, opening folders,
+  revealing files, single instance, clipboard, firewall, UI font. The UI code no longer
+  contains `winreg` / `explorer` / `os.startfile` / `ctypes.wintypes` — one of those
+  left behind means an import-time crash on Linux
+- **Single instance uses flock**: `fcntl.flock` on Linux — a kernel lock that is released
+  when the process dies, so no stale lock file from a previous unclean exit
+- **Autostart writes a `.desktop` file**: `~/.config/autostart/lansplice.desktop`, toggled
+  from the Settings menu (Windows still uses the registry, untouched)
+- **Firewall: gives you the command instead of changing it**: it needs root, the tool
+  differs per distribution, and the elevation prompt behaves inconsistently across
+  desktops. The app picks the right command for ufw / firewalld / iptables and you paste
+  it once
+- **CJK font is detected at startup**: Noto Sans CJK → Source Han Sans → WenQuanYi →
+  Droid Sans Fallback. Hardcoding "Microsoft YaHei" gives you tofu boxes on Linux
+- **No tray on Linux** (libappindicator / StatusNotifierItem vary too much between
+  desktops). Closing the window quits; use systemd for a always-on receiver
+- **Windows behaviour is byte-for-byte unchanged**: all 568 existing tests still pass
 
 **v1.7.0** — Linux / Xinchuang: headless receiver, per-platform folders, Linux NIC enumeration
 - **`serve` subcommand**: act as a receiver without opening a window — `lansplice serve` just
