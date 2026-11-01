@@ -284,6 +284,7 @@ def load_cfg():
     d.setdefault("clip_auto", False)      # 收到文字不自动改剪贴板
     d.setdefault("last_peer", {})         # {"ip":..,"port":..,"name":..}
     d.setdefault("web_port", 47822)       # 手机网页端端口
+    d.setdefault("mirror_jobs", [])       # v1.6.1 常用镜像任务
     save_cfg(d)
     return d
 
@@ -337,6 +338,153 @@ def save_cfg(d):
                   ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+# ------------------------------------------------------------ 右键菜单 / 进件
+#
+# 资源管理器右键「用 LanSplice 发送」是外面起的第二个进程，路径得交给
+# 已经在跑的那个窗口。用 WM_COPYDATA 要两边都改消息循环，用 socket 又要
+# 多开一个端口 —— 这里用最简单可靠的办法：往一个目录里放小 JSON 文件，
+# 主窗口定时捡。写用 .part + rename，捡的人永远不会读到半个文件。
+
+def inbox_dir():
+    return os.path.join(os.path.dirname(cfg_path()), "inbox")
+
+
+def drop_paths(paths):
+    """把一批路径投给正在运行的实例。失败不抛 —— 大不了这次传不了。"""
+    paths = [str(p) for p in (paths or []) if p]
+    if not paths:
+        return False
+    d = inbox_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+        base = "%014d_%d" % (int(time.time() * 1000), os.getpid())
+        tmp = os.path.join(d, base + ".part")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(paths, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(d, base + ".json"))
+        return True
+    except Exception:
+        return False
+
+
+def take_drops():
+    """捡走进件，返回路径列表（去重、保序）。"""
+    d = inbox_dir()
+    if not os.path.isdir(d):
+        return []
+    out, seen = [], set()
+    try:
+        names = sorted(os.listdir(d))
+    except Exception:
+        return []
+    for n in names:
+        p = os.path.join(d, n)
+        if n.endswith(".part"):
+            # 别人正在写，或者写一半崩了；超过一分钟的算垃圾
+            try:
+                if time.time() - os.path.getmtime(p) > 60:
+                    os.remove(p)
+            except Exception:
+                pass
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                v = json.load(f)
+            if isinstance(v, list):
+                for x in v:
+                    x = str(x or "")
+                    if x and os.path.normcase(x) not in seen:
+                        seen.add(os.path.normcase(x))
+                        out.append(x)
+            os.remove(p)
+        except Exception:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+        if len(out) >= 200:
+            break
+    return out
+
+
+def exe_launch_path():
+    """注册表里那个图标/程序该指向谁（打包后是 exe，源码运行是脚本）。"""
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(sys.executable)
+    return os.path.abspath(__file__)
+
+
+def exe_launch_cmd():
+    """
+    注册表里的那条命令。%1 由资源管理器替换成被点的路径。
+    """
+    if getattr(sys, "frozen", False):
+        return '"%s" --send "%%1"' % os.path.abspath(sys.executable)
+    # 源码模式用 pythonw，否则每次右键都闪一个黑框
+    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    exe = pyw if os.path.isfile(pyw) else sys.executable
+    return '"%s" "%s" --send "%%1"' % (exe, os.path.abspath(__file__))
+
+
+SHELL_KEYS = (r"Software\Classes\*\shell\LanSplice",
+              r"Software\Classes\Directory\shell\LanSplice")
+
+
+def _reg_del_tree(root, path):
+    import winreg
+    try:
+        k = winreg.OpenKey(root, path, 0, winreg.KEY_ALL_ACCESS)
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    while True:
+        try:
+            sub = winreg.EnumKey(k, 0)
+        except OSError:
+            break
+        _reg_del_tree(root, path + "\\" + sub)
+    k.Close()
+    try:
+        winreg.DeleteKey(root, path)
+    except OSError:
+        pass
+
+
+def shell_menu_set(on):
+    """在 HKCU 下挂/摘右键菜单。只改当前用户，不需要管理员。"""
+    try:
+        import winreg
+        for key in SHELL_KEYS:
+            if on:
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as k:
+                    winreg.SetValueEx(k, "", 0, winreg.REG_SZ, _t("g422"))
+                    winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ,
+                                      exe_launch_path() + ",0")
+                    # 多选时合并成一次调用，别开一堆进程
+                    winreg.SetValueEx(k, "MultiSelectModel", 0, winreg.REG_SZ,
+                                      "Player")
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                      key + r"\command") as k:
+                    winreg.SetValueEx(k, "", 0, winreg.REG_SZ, exe_launch_cmd())
+            else:
+                _reg_del_tree(winreg.HKEY_CURRENT_USER, key)
+        return True
+    except Exception:
+        return False
+
+
+def shell_menu_get():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            SHELL_KEYS[0] + r"\command") as k:
+            v, _ = winreg.QueryValueEx(k, "")
+        return bool(v)
+    except Exception:
+        return False
 
 
 def fmt_speed(bps):
@@ -462,6 +610,7 @@ class App:
         self.root.after(400, self.scan_peers)
         self.root.after(600, self._refresh_fw_status)
         self.root.after(1600, self._try_last_peer)
+        self.root.after(300, self._poll_inbox)     # 右键菜单投进来的路径
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._init_tray()
 
@@ -553,6 +702,8 @@ class App:
         hm.add_command(label=_t("g030"), command=self.show_help)
         hm.add_command(label=_t("g031"), command=self.show_disclaimer)
         hm.add_separator()
+        hm.add_command(label=_t("g428"), command=self.show_license)
+        hm.add_separator()
         hm.add_command(label=_t("g032"), command=self.show_about)
         m.add_cascade(label=_t("g033"), menu=hm)
 
@@ -578,6 +729,10 @@ class App:
         stm.add_separator()
         stm.add_checkbutton(label=_t("g353"), variable=self.var_boot,
                             command=self._toggle_boot)
+        stm.add_separator()
+        self.var_shell = tk.BooleanVar(value=shell_menu_get())
+        stm.add_checkbutton(label=_t("g423"), variable=self.var_shell,
+                            command=self._toggle_shell_menu)
         stm.add_separator()
         stm.add_command(label=_t("g355"), command=self.open_cfg_folder)
         m.add_cascade(label=_t("g354"), menu=stm)
@@ -1250,6 +1405,36 @@ class App:
             self.var_boot.set(autostart_get())
             messagebox.showwarning(APP_NAME, _t("g306"), parent=self.root)
 
+    def _toggle_shell_menu(self):
+        """v1.6.1：在资源管理器右键里挂/摘「用 LanSplice 发送」。"""
+        on = bool(self.var_shell.get())
+        if shell_menu_set(on):
+            self.cfg["shell_menu"] = on
+            save_cfg(self.cfg)
+            self.lbl_status.config(text=_t("g424") if on else _t("g425"))
+        else:
+            self.var_shell.set(shell_menu_get())
+            messagebox.showwarning(APP_NAME, _t("g426"), parent=self.root)
+
+    def _poll_inbox(self):
+        """
+        捡走右键菜单投进来的路径（另一个进程写的小 JSON）。
+        800ms 一次，空目录就是一次 listdir，开销可以忽略。
+        """
+        try:
+            got = take_drops()
+            if got:
+                self.add_paths(got)
+                self.lbl_status.config(text=_t("g427") % len(got))
+                if not self.root.winfo_viewable():
+                    self.show_window()
+        except Exception:
+            pass
+        try:
+            self.root.after(800, self._poll_inbox)
+        except Exception:
+            pass
+
     def open_cfg_folder(self):
         try:
             L.open_in_file_manager(os.path.dirname(cfg_path()))
@@ -1586,11 +1771,26 @@ class App:
         self._mirror_win = win
         win.title(_t("g370"))
         win.configure(bg=C_BG)
-        win.geometry("560x320")
+        win.geometry("640x364")
         win.transient(self.root)
 
         tk.Label(win, text=_t("g371"), bg=C_BG, fg=C_SUB, font=(FONT, 9),
                  justify="left").pack(anchor="w", padx=16, pady=(14, 8))
+
+        # v1.6.1：常用任务。同一对文件夹每周都要同步一次，
+        # 每次重新点两遍目录太傻 —— 存下来，下拉里挑一下就行。
+        row0 = tk.Frame(win, bg=C_BG)
+        row0.pack(fill="x", padx=16, pady=(0, 6))
+        tk.Label(row0, text=_t("g417"), bg=C_BG, fg=C_TEXT,
+                 font=(FONT, 9), width=8, anchor="w").pack(side="left")
+        job_var = tk.StringVar()
+        cb = ttk.Combobox(row0, textvariable=job_var, state="readonly",
+                          font=(FONT, 9))
+        cb.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        b_save = self._mk_btn(row0, _t("g419"), None, C_GREEN, width=None)
+        b_save.pack(side="left")
+        b_del = self._mk_btn(row0, _t("g420"), None, C_RED, width=None)
+        b_del.pack(side="left", padx=(6, 0))
 
         row1 = tk.Frame(win, bg=C_BG)
         row1.pack(fill="x", padx=16, pady=3)
@@ -1625,8 +1825,82 @@ class App:
         pbar = ttk.Progressbar(win, maximum=1000)
         pbar.pack(fill="x", padx=16, pady=(14, 4))
         lbl = tk.Label(win, text="", bg=C_BG, fg=C_SUB, font=(FONT, 8),
-                       anchor="w", justify="left", wraplength=520)
+                       anchor="w", justify="left", wraplength=600)
         lbl.pack(fill="x", padx=16)
+
+        # ---- 常用任务：存 / 取 / 删
+        def jobs_list():
+            return [j for j in (self.cfg.get("mirror_jobs") or [])
+                    if isinstance(j, dict) and j.get("src")]
+
+        def job_text(j):
+            name = HIST.disp_name(j.get("src")) or j.get("src") or ""
+            dst = j.get("dst") or ""
+            if dst and dst != name:
+                return "%s  →  %s" % (name, dst)
+            return name or dst          # 同名时别写成 "X → X"，像出了 bug
+
+        def refresh_jobs(sel=None):
+            js = jobs_list()
+            vals = [job_text(j) for j in js]
+            cb["values"] = vals
+            if sel is not None and 0 <= sel < len(js):
+                job_var.set(vals[sel])
+                cb.current(sel)
+            elif vals and job_var.get() in vals:
+                pass                     # 还指着一条有效记录，别去动它
+            elif vals:
+                # 空着会让人以为这里没东西：先显示最近一条，
+                # 但不自动填进输入框 —— 用户点了才算数
+                job_var.set(vals[0])
+                cb.current(0)
+            else:
+                job_var.set("")          # 没有任何收藏：清空即可（current(-1) 会报错）
+
+        def on_pick(_e=None):
+            i = cb.current()
+            js = jobs_list()
+            if not (0 <= i < len(js)):
+                return
+            src_var.set(js[i].get("src") or "")
+            dst_var.set(js[i].get("dst") or "")
+            if not os.path.isdir(src_var.get()):
+                lbl.config(text=_t("g418"))
+
+        def save_job():
+            src = src_var.get().strip()
+            dst = dst_var.get().strip().strip("/\\")
+            if not src or not os.path.isdir(src):
+                messagebox.showinfo(APP_NAME, _t("g378"), parent=win)
+                return
+            if not dst:
+                dst = os.path.basename(src)
+            key = (os.path.normcase(os.path.normpath(src)), dst)
+            js = [j for j in jobs_list()
+                  if (os.path.normcase(os.path.normpath(j.get("src") or "")),
+                      j.get("dst") or "") != key]
+            js.insert(0, {"src": os.path.normpath(src), "dst": dst,
+                          "t": time.time()})
+            self.cfg["mirror_jobs"] = js[:12]      # 再多也记不住，12 条够用
+            save_cfg(self.cfg)
+            refresh_jobs(0)
+            lbl.config(text=_t("g421") % dst)
+
+        def del_job():
+            i = cb.current()
+            js = jobs_list()
+            if not (0 <= i < len(js)):
+                return
+            del js[i]
+            self.cfg["mirror_jobs"] = js
+            save_cfg(self.cfg)
+            refresh_jobs()
+            lbl.config(text="")
+
+        cb.bind("<<ComboboxSelected>>", on_pick)
+        b_save.config(command=save_job)
+        b_del.config(command=del_job)
+        refresh_jobs()
 
         bar = tk.Frame(win, bg=C_BG)
         bar.pack(fill="x", padx=16, pady=12)
@@ -2091,7 +2365,9 @@ class App:
                 ok=max(0, len(items) - len(failed or []) - int(skipped or 0)),
                 fail=len(failed or []), skip=skipped,
                 root=self.peer_root,
-                src=[p for p in list(self.queue_paths)]))
+                src=[p for p in list(self.queue_paths)],
+                names=[HIST.disp_name(p) for p in self.queue_paths],
+                bad=[[n, e] for n, e in (failed or [])]))
         except Exception:
             pass
 
@@ -2276,23 +2552,28 @@ class App:
     # ------------------------------------------------------------ 传输历史
 
     def history_dialog(self):
-        """v1.6.0：传输历史。只读历史文件，不碰当前队列。"""
+        """
+        v1.6.0：传输历史。只读历史文件，不碰当前队列。
+
+        v1.6.1：加了「内容」列。只有「2 个文件 17 MB」这种记录没法回答
+        「上次那个装驱动的包到底传没传」—— 用户要的是名字。
+        """
         win = tk.Toplevel(self.root)
         win.title(_t("g387"))
-        win.geometry("860x520")
-        win.minsize(720, 420)
+        win.geometry("960x560")
+        win.minsize(780, 440)
         win.configure(bg=C_BG)
         win.transient(self.root)
 
-        cols = ("when", "dir", "peer", "files", "size", "res")
-        heads = (_t("g388"), _t("g389"), _t("g390"),
+        cols = ("when", "dir", "name", "peer", "files", "size", "res")
+        heads = (_t("g388"), _t("g389"), _t("g410"), _t("g390"),
                  _t("g391"), _t("g392"), _t("g393"))
-        widths = (150, 74, 210, 64, 96, 210)
+        widths = (126, 54, 300, 196, 46, 86, 138)
         tv = ttk.Treeview(win, columns=cols, show="headings", height=14)
         for c, h, w in zip(cols, heads, widths):
             tv.heading(c, text=h)
-            tv.column(c, width=w, anchor="w", stretch=(c == "peer"))
-        tv.pack(fill="both", expand=True, padx=14, pady=(14, 8))
+            tv.column(c, width=w, anchor="w", stretch=(c == "name"))
+        tv.pack(fill="both", expand=True, padx=14, pady=(14, 6))
 
         by_id = {}
 
@@ -2305,6 +2586,14 @@ class App:
             if name and ip and name != ip:
                 return "%s (%s)" % (name, ip)
             return name or ip or "—"
+
+        def fmt_name(e):
+            names = HIST.entry_names(e)
+            if not names:
+                return "—"
+            if len(names) == 1:
+                return names[0]
+            return _t("g407") % (names[0], len(names))
 
         def fmt_res(e):
             if e.get("err"):
@@ -2319,47 +2608,60 @@ class App:
             by_id.clear()
             rows = HIST.load(limit=300)
             if not rows:
-                tv.insert("", "end", values=("", "", _t("g398"), "", "", ""))
+                tv.insert("", "end", values=("", "", _t("g398"), "", "", "", ""))
                 return
             for e in rows:
                 ts = time.strftime("%m-%d %H:%M:%S",
                                    time.localtime(float(e.get("t") or 0)))
                 iid = tv.insert("", "end", values=(
-                    ts, fmt_dir(e), fmt_peer(e), int(e.get("files") or 0),
+                    ts, fmt_dir(e), fmt_name(e), fmt_peer(e),
+                    int(e.get("files") or 0),
                     L.human_size(int(e.get("bytes") or 0)), fmt_res(e)))
                 by_id[iid] = e
 
-        def do_resend():
+        def cur_entry():
             sel = tv.selection()
-            if not sel:
-                return
-            e = by_id.get(sel[0]) or {}
+            return by_id.get(sel[0]) if sel else None
+
+        def resend(e):
             if e.get("dir") != "out":
                 messagebox.showinfo(APP_NAME, _t("g399"), parent=win)
-                return
+                return False
             src = [p for p in (e.get("src") or []) if p and os.path.exists(p)]
             if not src:
                 messagebox.showinfo(APP_NAME, _t("g399") + "\n" + _t("g400"),
                                     parent=win)
-                return
+                return False
             if e.get("ip"):
                 self.set_peer(e["ip"], int(e.get("port") or L.TCP_PORT),
                               e.get("peer") or "")
             self.add_paths(src)
             self.lbl_status.config(text=_t("g401") % len(src))
-            win.destroy()
-            if self.peer_ip and not self.sending:
-                self.start_send()
+            return True
 
-        def do_open():
-            sel = tv.selection()
-            e = by_id.get(sel[0]) if sel else None
+        def do_resend():
+            e = cur_entry()
+            if not e:
+                return
+            if resend(e):
+                win.destroy()
+                if self.peer_ip and not self.sending:
+                    self.start_send()
+
+        def open_root(e):
             path = (e or {}).get("root") or self.cfg.get("recv_root") or ""
             if path and os.path.isdir(path):
                 try:
                     os.startfile(path)
+                    return
                 except Exception:
                     pass
+            self.open_recv_root()
+
+        def do_open():
+            e = cur_entry()
+            if e:
+                open_root(e)
             else:
                 self.open_recv_root()
 
@@ -2369,20 +2671,131 @@ class App:
             HIST.clear()
             fill()
 
+        def show_detail():
+            e = cur_entry()
+            if e:
+                self._hist_detail(win, e, resend, open_root)
+
         fill()
 
         bar = tk.Frame(win, bg=C_BG)
         bar.pack(fill="x", padx=14, pady=(0, 12))
+        self._mk_btn(bar, _t("g408"), show_detail, "#455a64",
+                     width=None).pack(side="left")
         self._mk_btn(bar, _t("g403"), do_resend, C_BLUE,
-                     width=None).pack(side="left")
-        self._mk_btn(bar, _t("g404"), do_open, C_GRAY,
                      width=None).pack(side="left", padx=6)
-        self._mk_btn(bar, _t("g405"), do_clear, C_RED,
+        self._mk_btn(bar, _t("g404"), do_open, C_GRAY,
                      width=None).pack(side="left")
+        self._mk_btn(bar, _t("g405"), do_clear, C_RED,
+                     width=None).pack(side="left", padx=6)
         self._mk_btn(bar, _t("g406"), win.destroy, C_GRAY,
                      width=None).pack(side="right")
+        tk.Label(bar, text=_t("g413"), bg=C_BG, fg=C_GRAY,
+                 font=(FONT, 8)).pack(side="right", padx=(0, 10))
 
-        tv.bind("<Double-1>", lambda _e: do_open())
+        tv.bind("<Double-1>", lambda _e: show_detail())
+        tv.bind("<Return>", lambda _e: show_detail())
+
+    def _hist_detail(self, parent, e, resend_cb, open_cb):
+        """一条历史的详情：到底传了哪些文件、哪个失败了、为什么。"""
+        d = tk.Toplevel(parent)
+        d.title(_t("g409"))
+        d.geometry("700x540")
+        d.minsize(560, 400)
+        d.configure(bg=C_BG)
+        d.transient(parent)
+
+        names = HIST.entry_names(e)
+        bad = {}
+        for b in (e.get("bad") or []):
+            if b:
+                bad[str(b[0])] = str(b[1]) if len(b) > 1 else ""
+
+        # ---- 抬头几行：时间 / 方向 / 对端 / 大小 / 结果
+        head = tk.Frame(d, bg=C_BG)
+        head.pack(fill="x", padx=16, pady=(14, 6))
+        ts = time.strftime("%Y-%m-%d %H:%M:%S",
+                           time.localtime(float(e.get("t") or 0)))
+        peer = (e.get("peer") or "").strip()
+        ip = (e.get("ip") or "").strip()
+        if peer and ip and peer != ip:
+            fmt = "%s (%s)" % (peer, ip)
+        else:
+            fmt = peer or ip or "—"
+        ok, fail = int(e.get("ok") or 0), int(e.get("fail") or 0)
+        res = (_t("g396") % (ok, fail)) if fail else (_t("g397") % ok)
+        if e.get("err"):
+            res = str(e["err"])[:60]
+        rows = (
+            (_t("g388"), ts),
+            (_t("g389"), _t("g394") if e.get("dir") == "out" else _t("g395")),
+            (_t("g390"), fmt),
+            (_t("g392"), L.human_size(int(e.get("bytes") or 0))),
+            (_t("g393"), res),
+        )
+        if e.get("root"):
+            rows += (((_t("g415") if e.get("dir") == "in" else _t("g414")),
+                      str(e["root"])[:80]),)
+        for r, (k, v) in enumerate(rows):
+            tk.Label(head, text=k, bg=C_BG, fg=C_SUB, font=(FONT, 9),
+                     width=8, anchor="w").grid(row=r, column=0, sticky="w")
+            tk.Label(head, text=v, bg=C_BG,
+                     fg=(C_RED if (k == _t("g393") and fail) else C_TEXT),
+                     font=(FONT, 9), anchor="w",
+                     justify="left").grid(row=r, column=1, sticky="w")
+
+        # ---- 文件清单
+        cap = _t("g411") % (len(names) or int(e.get("files") or 0))
+        if fail:
+            cap += "  ·  " + (_t("g412") % fail)
+        tk.Label(d, text=cap, bg=C_BG, fg=C_SUB, font=(FONT, 9),
+                 anchor="w").pack(fill="x", padx=16, pady=(8, 2))
+
+        box = tk.Frame(d, bg=C_BG)
+        box.pack(fill="both", expand=True, padx=16)
+        txt = tk.Text(box, bg=C_CARD, fg=C_TEXT, font=(FONT, 9), wrap="word",
+                      relief="flat", padx=8, pady=6, height=10)
+        sb = ttk.Scrollbar(box, orient="vertical", command=txt.yview)
+        txt.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        txt.tag_config("ok", foreground=C_TEXT)
+        txt.tag_config("bad", foreground=C_RED)
+        txt.tag_config("why", foreground=C_SUB)
+
+        if names:
+            for n in names:
+                if n in bad:
+                    txt.insert("end", "✗  " + n + "\n", "bad")
+                    if bad[n]:
+                        txt.insert("end", "     " + bad[n] + "\n", "why")
+                else:
+                    txt.insert("end", "✓  " + n + "\n", "ok")
+            more = int(e.get("files") or 0) - len(names)
+            if more > 0:
+                txt.insert("end", _t("g416") % (more, len(names)) + "\n", "why")
+        else:
+            for p in (e.get("src") or []):
+                if p:
+                    txt.insert("end", "   " + str(p) + "\n", "ok")
+            if not (e.get("src") or []):
+                txt.insert("end", _t("g398") + "\n", "why")
+        txt.config(state="disabled")
+
+        bar = tk.Frame(d, bg=C_BG)
+        bar.pack(fill="x", padx=16, pady=12)
+
+        def do_resend():
+            if resend_cb(e):
+                d.destroy()
+
+        self._mk_btn(bar, _t("g431"), do_resend, C_BLUE,
+                     width=None).pack(side="left")
+        self._mk_btn(bar, _t("g404"), lambda: open_cb(e), C_GRAY,
+                     width=None).pack(side="left", padx=6)
+        self._mk_btn(bar, _t("g406"), d.destroy, C_GRAY,
+                     width=None).pack(side="right")
+        d.bind("<Escape>", lambda _e: d.destroy())
 
     def open_peer_dir(self, r=None):
         """
@@ -3013,6 +3426,38 @@ class App:
             _t("g226") %
             (APP_NAME, APP_VER, _t("g002")))
 
+    def show_license(self):
+        """
+        v1.6.1：许可与署名。
+
+        关于窗口里放不下这么多字，塞进 messagebox 会被系统截成一屏乱折行；
+        单独开一个只读文本框，能滚、能选中、能复制。
+        """
+        win = tk.Toplevel(self.root)
+        win.title(_t("g430"))
+        win.geometry("640x580")
+        win.minsize(520, 420)
+        win.configure(bg=C_BG)
+        win.transient(self.root)
+
+        box = tk.Frame(win, bg=C_BG)
+        box.pack(fill="both", expand=True, padx=16, pady=(16, 8))
+        txt = tk.Text(box, bg=C_CARD, fg=C_TEXT, font=(FONT, 9), wrap="word",
+                      relief="flat", padx=12, pady=10)
+        sb = ttk.Scrollbar(box, orient="vertical", command=txt.yview)
+        txt.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        txt.insert("1.0", _t("g429"))
+        txt.config(state="disabled")
+
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=16, pady=(0, 12))
+        self._mk_btn(bar, _t("g406"), win.destroy, C_GRAY,
+                     width=None).pack(side="right")
+        win.bind("<Escape>", lambda _e: win.destroy())
+        win.after(60, lambda: txt.focus_set())
+
     # ------------------------------------------------------------ 事件泵
 
     def _pump(self):
@@ -3134,7 +3579,11 @@ class App:
                         HIST.append(HIST.make_entry(
                             "in", files=1, nbytes=int(d.get("size") or 0),
                             ok=1, root=self.cfg.get("recv_root", ""),
-                            src=[d.get("path", "")]))
+                            src=[d.get("path", "")],
+                            names=[name],
+                            peer=self.peer_name or self.peer_ip,
+                            ip=self.peer_ip,
+                            port=int(self.peer_port or 0)))
                     except Exception:
                         pass
             elif k == "recv_error":
@@ -3408,6 +3857,16 @@ def main():
     # 带子命令就交给命令行模块，什么都不带才是图形界面。
     # 这一步必须在建 Tk 之前 —— 否则批处理里调用会闪一下窗口。
     args = sys.argv[1:]
+
+    # v1.6.1：资源管理器右键过来的 "--send <路径>"。
+    # 先把路径投给在跑的那个实例，自己再决定要不要开窗口。
+    send_paths = []
+    if "--send" in args:
+        i = args.index("--send")
+        send_paths = [a for a in args[i + 1:] if a and not a.startswith("--")]
+        args = args[:i]
+        drop_paths(send_paths)
+
     if args and args[0] in ("send", "devices", "version", "-h", "--help", "help"):
         import link2pc_cli as CLI
         CLI._attach_console()
