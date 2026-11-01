@@ -55,7 +55,7 @@ MAGIC = b"L2P1"
 # 版本号只在这里写一次。
 # 以前图形界面和命令行各写一份，升级时忘了改其中一处，
 # 就会出现「窗口标题 1.5.0、命令行 version 1.4.0」这种自相矛盾。
-APP_VER = "1.7.0"
+APP_VER = "1.7.1"
 
 DISCOVERY_PORT = 47821
 ANNOUNCE_EVERY = 8             # 秒。接收端隔这么久主动宣告一次自己
@@ -785,19 +785,27 @@ def open_in_file_manager(path):
     """
     用系统文件管理器打开一个目录（Windows 下是资源管理器）。
     只做「打开」，不执行路径里的任何东西；调用方负责先确认目录存在。
+
+    v1.7.1 起交给 platform 层：原来这里只认 xdg-open，而麒麟/UOS 的
+    最小安装里不一定有它（可能只有 gio 或 kde-open），一调用就是
+    FileNotFoundError。那边会依次退到几个备选，都不行才放弃。
     """
     path = os.path.normpath(path)
-    if os.name == "nt":
-        exe = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows",
-                           "explorer.exe")
-        if not os.path.isfile(exe):
-            exe = "explorer.exe"
-        # explorer 对逗号/引号有怪癖，用 list2cmdline 让它自己加引号
-        subprocess.Popen([exe, path])
-    else:
-        import sys
-        opener = "open" if sys.platform == "darwin" else "xdg-open"
-        subprocess.Popen([opener, path])
+    try:
+        import link2pc_platform as _P
+        return _P.open_path(path)
+    except Exception:
+        # platform 层意外不可用时，退回最朴素的做法
+        try:
+            import sys as _sys
+            if os.name == "nt":
+                subprocess.Popen(["explorer", path])
+            else:
+                subprocess.Popen(
+                    ["open" if _sys.platform == "darwin" else "xdg-open", path])
+            return True
+        except Exception:
+            return False
 
 
 # ---------------------------------------------------------------- 服务端
