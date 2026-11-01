@@ -29,6 +29,7 @@ except Exception:
     HAS_DND = False
 
 import link2pc_core as L
+import link2pc_history as HIST
 import link2pc_i18n as I18N
 from link2pc_i18n import t as _t
 
@@ -52,6 +53,102 @@ APP_VER = L.APP_VER          # 唯一来源在 core，别在这里再写死一�
 COPYRIGHT = "© 永远的兰兰"
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+# ---------------------------------------------------------------- 单实例
+
+# 命名互斥量：同一台机器、同一个登录会话里只允许一个图形界面。
+# 用 Local\ 而不是 Global\ —— 两个 Windows 用户各开一个互不干扰。
+MUTEX_NAME = "Local\\LanSplice-SingleInstance"
+ERROR_ALREADY_EXISTS = 183
+_mutex_handle = None
+
+
+def single_instance_acquire(name=MUTEX_NAME):
+    """
+    抢单实例锁。第一个进场的返回 True，后来者返回 False。
+
+    为什么必须有：双击两次会出现两个进程抢同一个 47820 端口。
+    Windows 允许 SO_REUSEADDR 二次绑定，于是两边都"启动成功"，
+    但接收到底落在哪个进程是不确定的 —— 这就是「传了没反应」的经典成因。
+
+    失败时一律放行（返回 True）：拿不到锁总比打不开程序强。
+    """
+    global _mutex_handle
+    if os.name != "nt":
+        return True
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL,
+                                     wintypes.LPCWSTR]
+        k32.GetLastError.restype = wintypes.DWORD
+        h = k32.CreateMutexW(None, False, name)
+        if not h:
+            return True
+        if k32.GetLastError() == ERROR_ALREADY_EXISTS:
+            k32.CloseHandle(h)
+            return False
+        _mutex_handle = h          # 故意不关：进程活着就一直持有
+        return True
+    except Exception:
+        return True
+
+
+def _tk_windows():
+    """枚举标题以 LanSplice 开头的 Tk 顶层窗口 [(hwnd, 是否可见)]。"""
+    u = ctypes.windll.user32
+    out = []
+    EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def _cb(hwnd, _lp):
+        try:
+            cb = ctypes.create_unicode_buffer(256)
+            if not u.GetClassNameW(hwnd, cb, 256):
+                return True
+            if cb.value != "TkTopLevel":
+                return True
+            n = u.GetWindowTextLengthW(hwnd)
+            if n <= 0:
+                return True
+            tb = ctypes.create_unicode_buffer(n + 1)
+            u.GetWindowTextW(hwnd, tb, n + 1)
+            if tb.value.startswith(APP_NAME):
+                out.append((hwnd, bool(u.IsWindowVisible(hwnd))))
+        except Exception:
+            pass
+        return True
+
+    try:
+        u.EnumWindows(EnumProc(_cb), 0)
+    except Exception:
+        pass
+    return out
+
+
+def focus_existing():
+    """
+    把已经在跑的那个窗口提到前面。
+
+    缩到托盘时窗口是 withdraw 状态（不可见但仍存在），
+    所以优先挑可见的；一个可见的都没有，就把那个隐藏的 show 出来。
+    """
+    wins = _tk_windows()
+    if not wins:
+        return False
+    vis = [h for h, v in wins if v]
+    hwnd = (vis or [wins[0][0]])[0]
+    try:
+        u = ctypes.windll.user32
+        if not vis:
+            # 缩在托盘里的是 withdraw 状态：SW_RESTORE 对它不一定生效，
+            # 先 SW_SHOW(5) 把它显出来，再恢复并抢焦点
+            u.ShowWindow(hwnd, 5)
+        u.ShowWindow(hwnd, 9)          # SW_RESTORE
+        u.SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
 
 # ---------------------------------------------------------------- 配色
 
@@ -263,6 +360,52 @@ def fmt_eta(done, total, bps):
     return _t("g007") % (left // 3600)
 
 
+def parse_fw_status(out, expected_exe):
+    """
+    解析「防火墙状态」那段 PowerShell 的输出。
+
+    返回 (alive, has_public, stale)：
+      alive      —— 有几条启用的 LanSplice 规则
+      has_public —— 当前网络是不是「公用」（公用网络默认更严）
+      stale      —— 规则存在，但 -Program 指的是**另一个 exe**
+
+    stale 这一条是 v1.6.0 补的：规则按 exe 完整路径绑定，
+    `LanSplice-v1.5.2.exe` 升到 `v1.6.0.exe` 就是另一条路径，
+    Windows 认为「这个程序没被放行」，而旧规则还在、灯还是绿的 ——
+    用户看到的正是「昨天还好的，今天连不上」。
+    """
+    pub = False
+    alive = 0
+    progs = set()
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if line.startswith("CAT|"):
+            if line[4:] not in ("Private", "DomainAuthenticated"):
+                pub = True
+        elif line.startswith("RULE|"):
+            p = line.split("|")
+            if len(p) >= 3 and p[2].lower() == "true":
+                alive += 1
+        elif line.startswith("PROG|"):
+            p = line.split("|", 2)
+            raw = (p[2] if len(p) >= 3 else "").strip()
+            if not raw:
+                continue
+            try:
+                raw = os.path.expandvars(raw)
+                progs.add(os.path.normcase(os.path.abspath(raw)))
+            except Exception:
+                continue
+    stale = False
+    if alive and progs and expected_exe:
+        try:
+            want = os.path.normcase(os.path.abspath(expected_exe))
+            stale = want not in progs
+        except Exception:
+            stale = False
+    return alive, pub, stale
+
+
 # ---------------------------------------------------------------- 主窗口
 
 class App:
@@ -377,6 +520,7 @@ class App:
         fm.add_command(label=_t("g360"), command=self.show_qr_share)
         fm.add_separator()
         fm.add_command(label=_t("g012"), command=self.show_result_detail)
+        fm.add_command(label=_t("g386"), command=self.history_dialog)
         fm.add_separator()
         fm.add_command(label=_t("g013"), command=self.on_close)
         m.add_cascade(label=_t("g014"), menu=fm)
@@ -1937,6 +2081,20 @@ class App:
         if not failed and not self.root.winfo_viewable():
             self._notify(self.peer_name or self.peer_ip, short[:120])
 
+        # 落一条历史：这是「上次那个失败的文件叫什么」的唯一答案
+        try:
+            HIST.append(HIST.make_entry(
+                "out",
+                peer=self.peer_name or self.peer_ip,
+                ip=self.peer_ip, port=int(self.peer_port or 0),
+                files=len(items), nbytes=done,
+                ok=max(0, len(items) - len(failed or []) - int(skipped or 0)),
+                fail=len(failed or []), skip=skipped,
+                root=self.peer_root,
+                src=[p for p in list(self.queue_paths)]))
+        except Exception:
+            pass
+
         self._remember_peer()
 
         # 传完就把已经成功的条目从清单里移走，只留失败/取消的
@@ -2115,6 +2273,117 @@ class App:
         except Exception:
             pass
 
+    # ------------------------------------------------------------ 传输历史
+
+    def history_dialog(self):
+        """v1.6.0：传输历史。只读历史文件，不碰当前队列。"""
+        win = tk.Toplevel(self.root)
+        win.title(_t("g387"))
+        win.geometry("860x520")
+        win.minsize(720, 420)
+        win.configure(bg=C_BG)
+        win.transient(self.root)
+
+        cols = ("when", "dir", "peer", "files", "size", "res")
+        heads = (_t("g388"), _t("g389"), _t("g390"),
+                 _t("g391"), _t("g392"), _t("g393"))
+        widths = (150, 74, 210, 64, 96, 210)
+        tv = ttk.Treeview(win, columns=cols, show="headings", height=14)
+        for c, h, w in zip(cols, heads, widths):
+            tv.heading(c, text=h)
+            tv.column(c, width=w, anchor="w", stretch=(c == "peer"))
+        tv.pack(fill="both", expand=True, padx=14, pady=(14, 8))
+
+        by_id = {}
+
+        def fmt_dir(e):
+            return _t("g394") if e.get("dir") == "out" else _t("g395")
+
+        def fmt_peer(e):
+            name = (e.get("peer") or "").strip()
+            ip = (e.get("ip") or "").strip()
+            if name and ip and name != ip:
+                return "%s (%s)" % (name, ip)
+            return name or ip or "—"
+
+        def fmt_res(e):
+            if e.get("err"):
+                return e["err"][:30]
+            ok, fail = int(e.get("ok") or 0), int(e.get("fail") or 0)
+            if fail:
+                return _t("g396") % (ok, fail)
+            return _t("g397") % ok
+
+        def fill():
+            tv.delete(*tv.get_children())
+            by_id.clear()
+            rows = HIST.load(limit=300)
+            if not rows:
+                tv.insert("", "end", values=("", "", _t("g398"), "", "", ""))
+                return
+            for e in rows:
+                ts = time.strftime("%m-%d %H:%M:%S",
+                                   time.localtime(float(e.get("t") or 0)))
+                iid = tv.insert("", "end", values=(
+                    ts, fmt_dir(e), fmt_peer(e), int(e.get("files") or 0),
+                    L.human_size(int(e.get("bytes") or 0)), fmt_res(e)))
+                by_id[iid] = e
+
+        def do_resend():
+            sel = tv.selection()
+            if not sel:
+                return
+            e = by_id.get(sel[0]) or {}
+            if e.get("dir") != "out":
+                messagebox.showinfo(APP_NAME, _t("g399"), parent=win)
+                return
+            src = [p for p in (e.get("src") or []) if p and os.path.exists(p)]
+            if not src:
+                messagebox.showinfo(APP_NAME, _t("g399") + "\n" + _t("g400"),
+                                    parent=win)
+                return
+            if e.get("ip"):
+                self.set_peer(e["ip"], int(e.get("port") or L.TCP_PORT),
+                              e.get("peer") or "")
+            self.add_paths(src)
+            self.lbl_status.config(text=_t("g401") % len(src))
+            win.destroy()
+            if self.peer_ip and not self.sending:
+                self.start_send()
+
+        def do_open():
+            sel = tv.selection()
+            e = by_id.get(sel[0]) if sel else None
+            path = (e or {}).get("root") or self.cfg.get("recv_root") or ""
+            if path and os.path.isdir(path):
+                try:
+                    os.startfile(path)
+                except Exception:
+                    pass
+            else:
+                self.open_recv_root()
+
+        def do_clear():
+            if not messagebox.askyesno(APP_NAME, _t("g402"), parent=win):
+                return
+            HIST.clear()
+            fill()
+
+        fill()
+
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=14, pady=(0, 12))
+        self._mk_btn(bar, _t("g403"), do_resend, C_BLUE,
+                     width=None).pack(side="left")
+        self._mk_btn(bar, _t("g404"), do_open, C_GRAY,
+                     width=None).pack(side="left", padx=6)
+        self._mk_btn(bar, _t("g405"), do_clear, C_RED,
+                     width=None).pack(side="left")
+        self._mk_btn(bar, _t("g406"), win.destroy, C_GRAY,
+                     width=None).pack(side="right")
+
+        tv.bind("<Double-1>", lambda _e: do_open())
+
     def open_peer_dir(self, r=None):
         """
         让对端在**它自己的屏幕**上打开接收目录。
@@ -2179,27 +2448,28 @@ class App:
     def _fw_status_worker(self):
         # 规则查询本身要 3~4 秒（PowerShell 启动 + 遍历规则），
         # 所以把网络类别和规则合并成一次调用，别让状态灯一直停在"检测中"。
+        # PROG 那两行是 v1.6.0 加的：只有「规则里绑的 exe」才说明这版被放行。
         script = (
             "$o=@();"
             "Get-NetConnectionProfile -ErrorAction SilentlyContinue | "
             "ForEach-Object { $o += 'CAT|' + $_.NetworkCategory };"
             "Get-NetFirewallRule -DisplayName 'LanSplice*' -ErrorAction SilentlyContinue | "
-            "ForEach-Object { $o += 'RULE|' + $_.DisplayName + '|' + $_.Enabled };"
+            "ForEach-Object { $o += 'RULE|' + $_.DisplayName + '|' + $_.Enabled;"
+            "  $pr = ($_ | Get-NetFirewallApplicationFilter).Program;"
+            "  $o += 'PROG|' + $_.DisplayName + '|' + $pr };"
             "if ($o.Count -eq 0) { 'NONE' } else { $o }")
         try:
             rc, out, err = self._ps(script, timeout=25)
-            pub = False
-            alive = 0
-            for line in (out or "").splitlines():
-                line = line.strip()
-                if line.startswith("CAT|"):
-                    if line[4:] not in ("Private", "DomainAuthenticated"):
-                        pub = True
-                elif line.startswith("RULE|"):
-                    parts = line.split("|")
-                    if len(parts) >= 3 and parts[2].lower() == "true":
-                        alive += 1
-            if alive:
+            # 必须和 _fw_script 里 -Program 用的那个路径完全一致：
+            # 打包后是 exe 自己，源码运行时是 python.exe
+            try:
+                want = os.path.abspath(sys.executable)
+            except Exception:
+                want = ""
+            alive, pub, stale = parse_fw_status(out, want)
+            if stale:
+                self.events.put(("fw_status", ("stale", _t("g383"))))
+            elif alive:
                 txt = _t("g147") + (_t("g148") if pub else "")
                 self.events.put(("fw_status", (True, txt)))
             else:
@@ -2521,23 +2791,43 @@ class App:
         ps_list.append("Write-Output 'L2P-FW-OK'")
         return "".join(ps_list)
 
-    def fw_dialog(self, auto_private=False):
-        port = int(self.cfg["tcp_port"])
-        cats = self._net_categories()
-        has_public = any(c not in ("Private", "DomainAuthenticated") for _i, c in cats)
+    def _offer_reallow(self):
+        """
+        规则还绑着旧版 exe 时，问一次「要不要重新放行」。
 
-        if has_public and not auto_private:
-            msg = (_t("g175"))
-            if messagebox.askyesno(_t("g176"), msg, parent=self.root):
-                auto_private = True
-
-        msg2 = (
-            _t("g177")
-            % (port, L.DISCOVERY_PORT,
-               _t("g178") if auto_private
-               else _t("g179")))
-        if not messagebox.askyesno(APP_NAME, msg2, parent=self.root):
+        每个 exe 路径只问一次（记住 fw_prompt_for）：
+        用户点「否」之后再点状态灯也能手动放行，不必每次启动都弹。
+        """
+        try:
+            exe = os.path.abspath(sys.executable)
+        except Exception:
+            exe = ""
+        if self.cfg.get("fw_prompt_for") == exe:
             return
+        self.cfg["fw_prompt_for"] = exe
+        save_cfg(self.cfg)
+        if messagebox.askyesno(_t("g384"), _t("g385") % APP_VER, parent=self.root):
+            self.fw_dialog(quick=True)
+
+    def fw_dialog(self, auto_private=False, quick=False):
+        port = int(self.cfg["tcp_port"])
+        if not quick:
+            cats = self._net_categories()
+            has_public = any(c not in ("Private", "DomainAuthenticated")
+                             for _i, c in cats)
+
+            if has_public and not auto_private:
+                msg = (_t("g175"))
+                if messagebox.askyesno(_t("g176"), msg, parent=self.root):
+                    auto_private = True
+
+            msg2 = (
+                _t("g177")
+                % (port, L.DISCOVERY_PORT,
+                   _t("g178") if auto_private
+                   else _t("g179")))
+            if not messagebox.askyesno(APP_NAME, msg2, parent=self.root):
+                return
 
         ps = self._fw_script(port, auto_private)
 
@@ -2569,14 +2859,13 @@ class App:
         self.root.update_idletasks()
         ok = self._restart_server()
 
-        messagebox.showinfo(
-            APP_NAME,
-            _t("g182")
-            % (len(alive),
-               _t("g183") if alive else _t("g184"),
-               _t("g185")
-               if ok else
-               _t("g186")))
+        summary = _t("g182") % (len(alive),
+                                _t("g183") if alive else _t("g184"),
+                                _t("g185") if ok else _t("g186"))
+        if quick:
+            self.lbl_status.config(text=summary)
+        else:
+            messagebox.showinfo(APP_NAME, summary)
         self._refresh_fw_status()
 
     def diagnose(self):
@@ -2841,6 +3130,13 @@ class App:
                 if name:
                     self._notify(_t("g230") % name,
                                  L.human_size(int(d.get("size") or 0)))
+                    try:
+                        HIST.append(HIST.make_entry(
+                            "in", files=1, nbytes=int(d.get("size") or 0),
+                            ok=1, root=self.cfg.get("recv_root", ""),
+                            src=[d.get("path", "")]))
+                    except Exception:
+                        pass
             elif k == "recv_error":
                 msg = str(d.get("msg") or "")
                 if d.get("kept"):
@@ -2865,9 +3161,12 @@ class App:
                 APP_NAME, _t("g234") % (name, err or _t("g235")),
                 parent=self.root)
         elif kind == "fw_status":
-            ok, txt = data
+            state, txt = data
+            ok = (state is True)
             self.lbl_fw.config(text="● " + txt, fg=(C_GREEN if ok else C_RED))
             self.btn_fw.config(text=(_t("g236") if ok else _t("g040")))
+            if state == "stale":
+                self._offer_reallow()
         elif kind == "file_start":
             rel, i, n, size = data
             iid = self.rel_rows.get(rel)
@@ -3127,6 +3426,19 @@ def main():
         except Exception:
             pass
         sys.exit(code or 0)
+
+    # 单实例守在这里：命令行不受影响（上面已经分流走了），
+    # 只有「要开图形界面」才需要抢锁。
+    if not single_instance_acquire():
+        # 开机自启（--min）撞上已在运行的那份：安静退出，别弹窗、别抢焦点
+        if "--min" not in args:
+            # 前一个实例可能还在建窗口，给它 1 秒多；找不到就算了，别卡着用户
+            for _ in range(8):
+                if focus_existing():
+                    break
+                time.sleep(0.15)
+        sys.exit(0)
+
     try:
         _run()
     except Exception:
