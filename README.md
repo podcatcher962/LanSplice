@@ -28,9 +28,9 @@
 | Windows 7 及更早 | ❌ 不支持 |
 | **统信 UOS / 银河麒麟 V10 / Deepin / Ubuntu** | ✅ 支持（图形界面 + 命令行），见 [docs/linux.md](docs/linux.md) |
 | 飞腾 / 鲲鹏 / 龙芯 | ⚠️ 协议与架构无关，但**尚未在真机上验证** |
-| macOS | ❌ 没有原生版，只能用浏览器方式（[docs/mac-now.md](docs/mac-now.md)） |
+| macOS（Intel / Apple Silicon） | ⚠️ 有原生版，**但未在真机 Mac 上验证**：源码可直接跑，也可用 `build_macos.sh` 打成 `.app`；见 [docs/macos.md](docs/macos.md)（还没 Mac？用浏览器方式：[docs/mac-now.md](docs/mac-now.md)） |
 
-**Windows 只有一个文件，不用挑：`LanSplice-v1.7.1.exe`。**
+**Windows 只有一个文件，不用挑：`LanSplice-v1.7.2.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
@@ -225,21 +225,26 @@ LanSplice.exe version
 
 ## Linux / 信创系统
 
-同一份代码在 Linux 上也能跑，只是这一版**只有命令行**（图形界面在排期）。
+同一份代码在 Linux 上也能跑，**图形界面和命令行都有**。
 统信 UOS、银河麒麟 V10、深度、Ubuntu、Debian、CentOS、openEuler 都适用；
 飞腾 / 鲲鹏（ARM64）、海光 / 兆芯（x86_64）、龙芯（LoongArch）之间照样互通 ——
 协议是字节级的，跟 CPU 架构无关。
 
+下载并解开完整的 `LanSplice-v1.7.2-linux-kit.tar.gz`，然后：
+
 ```sh
 sudo sh install.sh
 
+lansplice                                    # 开图形界面
 lansplice serve                              # 当接收端，配对码会打印出来
 lansplice send 报表.xlsx --to 192.168.1.20   # 发给 Windows 那台
 lansplice devices                            # 扫局域网看谁在收
 ```
 
-- 依赖只有 `cryptography` 一个库：UOS 20 与麒麟 V10 都预装 `python3-cryptography`，
-  **物理隔离的内网不需要 pip**
+- **UOS 20 x86_64 可完全离线安装加密依赖**：完整包自带 Python 3.7 所需组件，
+  不需要 pip、可用的 apt 源或外网；其他发行版优先用系统 `cryptography`
+- 已在 **UOS 20 专业版 / Python 3.7.3** 真机完成 42 项自检，包括真实加密、
+  中文文件名收发、子目录、网卡枚举、单实例、自启文件和图形界面启动
 - 装成目录版而不是单文件：麒麟默认开 SELinux，单文件程序解包到 `/tmp` 会被策略拦下
 - 配置在 `~/.config/LanSplice`，传输历史在 `~/.local/share/LanSplice`
 - 防火墙放行 **TCP 47820**（收文件）和 **UDP 47821**（自动发现）
@@ -480,6 +485,31 @@ pyinstaller -F -w --name LanSplice \
 
 ## 更新记录
 
+**v1.7.2** — UOS 20 没有 pip、没有可用软件源也能安装；macOS 原生支持
+- **修复真实信创环境启动即崩**：UOS 20 专业版实测可能没有 `cryptography`、
+  没有 `pip3`，apt 还会报「无法定位软件包」。完整 Linux 包现在自带匹配
+  Python 3.7 / x86_64 的四个离线 wheel，不需要联网或系统软件源
+- **新增依赖引导 `link2pc_deps.py`**：系统库优先，缺失时自动识别程序旁的
+  `vendor/`；不做不加密降级，也不支持把 x86 扩展错装到 ARM / 龙芯
+- **安装后立即验收**：`install.sh` 最后真跑一次 `lansplice version`，
+  依赖问题不会拖到用户双击时才暴露；缺库报错也改成可操作的中文提示
+- 便携自检同样支持离线依赖，解到临时目录，普通用户就能跑；
+  wheel 内的第三方许可证原样保留
+- 新增 43 项离线依赖、平台选择、解包与回退测试
+- **macOS 原生支持**：命令行与图形界面在 Mac 上直接能跑（与 Windows / Linux
+  完全互通）；补齐 LaunchAgent 开机自启、Finder 复制文件后粘贴发送、
+  应用防火墙放行命令；新增未签名 `.app` 打包脚本（`build_macos.sh`）
+  与 macOS 自检（`mac_check.py`），文档见 `docs/macos.md`
+- **修好「发送文字」窗口底部按钮看不见**：文本框默认要 24 行高 × 80 字符宽，
+  又排在按钮栏前面，把窗口空间吃光后按钮栏被压成 1 像素 —— 非得手动拉大
+  窗口才露出来。现在按钮栏先占底、文本框给明确尺寸（`收到文字`同样问题一并修）
+- **开机自启不再弹看不见的对话框**：`--min` 缩到托盘时，防火墙「要不要重新
+  放行」的确认框没人点得到，程序会卡在那儿等。现在这种后台启动只在状态栏提示
+- **缺加密库的报错按平台说人话**：Windows 不再让人「重新运行 install.sh」
+  （那边根本没有这个文件），改成提示重新下载 exe / 查杀毒白名单
+- **回归测试加固**：单个测试卡住不再拖垮整轮（超时记录后继续）；GUI 测试统一
+  拦住模态框；新增 15 项弹窗布局回归 + 7 项静态体检（i18n 键、版本号一致性、
+  裸 except、平台 API 是否泄漏到模块顶层、核心路径是否吞异常）
 **v1.7.1** — Linux / 信创上能开窗口了
 - **图形界面在 Linux 上跑起来了**：`lansplice` 不带参数开窗口，带 `serve` /
   `send` / `devices` 走命令行。安装脚本会往应用菜单里放一个「LanSplice」图标
