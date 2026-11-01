@@ -1,0 +1,149 @@
+#!/bin/sh
+# LanSplice 在 Linux / 信创系统上的安装脚本
+# -----------------------------------------
+#   sudo sh install.sh              装到 /opt/lansplice
+#   sudo sh install.sh --prefix /usr/local/lansplice
+#   sudo sh install.sh --uninstall
+#
+# 只用 POSIX sh，不依赖 bash —— 统信 UOS / 麒麟 V10 上都直接能跑。
+#
+# 为什么不打包成单文件可执行：SELinux / AppArmor 策略（麒麟默认开）会拦住
+# PyInstaller 单文件往 /tmp 解包。目录版没这个问题，而且升级时只换 .py 文件。
+
+set -e
+
+APP="LanSplice"
+PREFIX="/opt/lansplice"
+BINLINK="/usr/local/bin/lansplice"
+SRC_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# 装哪些文件：只装真正要跑的，_build/ _tests/ 不进目标机器
+FILES="link2pc_core.py link2pc_cli.py link2pc_gui.py link2pc_i18n.py \
+link2pc_paths.py link2pc_history.py link2pc_web.py link2pc_tray.py \
+app.ico README.md LICENSE"
+
+say() { printf '%s\n' "$*"; }
+die() { printf '错误：%s\n' "$*" >&2; exit 1; }
+
+need_root() {
+    [ "$(id -u)" -eq 0 ] || die "需要管理员权限，请用 sudo sh install.sh"
+}
+
+# ---------------------------------------------------------------- 卸载
+if [ "$1" = "--uninstall" ]; then
+    need_root
+    rm -f "$BINLINK"
+    rm -rf "$PREFIX"
+    say "已卸载。配置和传输历史留在原位，没有删："
+    say "  ~/.config/LanSplice       （配置）"
+    say "  ~/.local/share/LanSplice  （历史）"
+    exit 0
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --prefix) PREFIX="$2"; shift 2 ;;
+        --prefix=*) PREFIX="${1#*=}"; shift ;;
+        -h|--help)
+            say "用法：sudo sh install.sh [--prefix 目录] [--uninstall]"
+            exit 0 ;;
+        *) die "不认识的参数：$1" ;;
+    esac
+done
+
+need_root
+
+# ---------------------------------------------------------------- 系统
+DISTRO=""
+if [ -r /etc/os-release ]; then
+    DISTRO=$(. /etc/os-release; printf '%s' "${ID:-}${ID_LIKE:+ }${ID_LIKE:-}")
+fi
+say "系统：${DISTRO:-未知}"
+
+command -v python3 >/dev/null 2>&1 || die "没找到 python3，请先装 python3（3.7 或更高）"
+
+PYVER=$(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])')
+PYMAJ=$(python3 -c 'import sys;print(sys.version_info[0])')
+PYMIN=$(python3 -c 'import sys;print(sys.version_info[1])')
+if [ "$PYMAJ" -lt 3 ] || { [ "$PYMAJ" -eq 3 ] && [ "$PYMIN" -lt 7 ]; }; then
+    die "Python 版本太低（$PYVER）。需要 3.7+，麒麟 V10 / 统信 UOS 20 自带的都够。"
+fi
+say "Python：$(python3 -c 'import sys;print(sys.version.split()[0])')"
+
+# ---------------------------------------------------------------- 依赖
+# 只依赖 cryptography 一个第三方库。优先用系统自带的包 —— 信创机器常常
+# 是物理隔离的内网，pip 根本连不出去，能用的只有安装光盘里的 deb。
+if python3 -c 'import cryptography' >/dev/null 2>&1; then
+    say "依赖：cryptography 已有（$(python3 -c 'import cryptography;print(cryptography.__version__)')）"
+else
+    say "依赖：缺 cryptography，尝试用系统包管理器安装…"
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y python3-cryptography || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y python3-cryptography || true
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y python3-cryptography || true
+    elif command -v zypper >/dev/null 2>&1; then
+        zypper -n install python3-cryptography || true
+    elif command -v pacman >/dev/null 2>&1; then
+        pacman -S --noconfirm python-cryptography || true
+    fi
+    if ! python3 -c 'import cryptography' >/dev/null 2>&1; then
+        say ""
+        say "还是装不上。这台机器大概是离线环境，请任选一种："
+        say "  1) 从系统安装光盘/内网源装 python3-cryptography（推荐，UOS 与麒麟都提供）"
+        say "  2) 拷一份同架构的 wheel 过来：pip3 install --no-index cryptography-*.whl"
+        die "缺 cryptography，装不了"
+    fi
+    say "依赖：已装好"
+fi
+
+# ---------------------------------------------------------------- 复制
+say "安装到 $PREFIX"
+mkdir -p "$PREFIX"
+for f in $FILES; do
+    if [ -f "$SRC_DIR/$f" ]; then
+        cp -f "$SRC_DIR/$f" "$PREFIX/$f"
+    fi
+done
+
+cat > "$BINLINK" <<EOF
+#!/bin/sh
+# LanSplice 启动器（由 install.sh 生成）
+# -B：不写 __pycache__ —— 装在 /opt 下普通用户改不动，否则每次启动都报权限警告
+exec python3 -B "$PREFIX/link2pc_cli.py" "\$@"
+EOF
+chmod 755 "$BINLINK"
+
+chmod 755 "$PREFIX"
+for f in $FILES; do
+    [ -f "$PREFIX/$f" ] && chmod 644 "$PREFIX/$f"
+done
+
+# ---------------------------------------------------------------- 放行
+say ""
+say "防火墙：接收端需要 TCP 47820，自动发现需要 UDP 47821。"
+if command -v ufw >/dev/null 2>&1; then
+    say "  已检测到 ufw，执行："
+    ufw allow 47820/tcp >/dev/null 2>&1 || true
+    ufw allow 47821/udp >/dev/null 2>&1 || true
+    say "    ufw allow 47820/tcp && ufw allow 47821/udp   （本次已自动执行）"
+elif command -v firewall-cmd >/dev/null 2>&1; then
+    say "  已检测到 firewalld，执行："
+    firewall-cmd --permanent --add-port=47820/tcp >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-port=47821/udp >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    say "    firewall-cmd --permanent --add-port=47820/tcp"
+    say "    firewall-cmd --permanent --add-port=47821/udp && firewall-cmd --reload"
+else
+    say "  没检测到 ufw/firewalld。如果系统另装了防火墙（麒麟常见），手动放行这两个端口。"
+fi
+
+say ""
+say "装好了。试一下："
+say "  lansplice version"
+say "  lansplice serve                       # 当接收端，默认收进 ~/Downloads/LanSplice"
+say "  lansplice send 文件 --to 192.168.1.20 # 发给对端（配对码在 serve 启动时会打出来）"
+say ""
+say "提示：两台机器的配对码必须一致。第一次用，在其中一台上跑 serve，"
+say "它会把配对码打出来并存进 ~/.config/LanSplice/config.json。"
