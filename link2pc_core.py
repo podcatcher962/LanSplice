@@ -25,6 +25,7 @@ LanSplice 传输内核
 
 import os
 import io
+import sys
 import json
 import time
 import hmac
@@ -54,7 +55,7 @@ MAGIC = b"L2P1"
 # 版本号只在这里写一次。
 # 以前图形界面和命令行各写一份，升级时忘了改其中一处，
 # 就会出现「窗口标题 1.5.0、命令行 version 1.4.0」这种自相矛盾。
-APP_VER = "1.6.1"
+APP_VER = "1.7.0"
 
 DISCOVERY_PORT = 47821
 ANNOUNCE_EVERY = 8             # 秒。接收端隔这么久主动宣告一次自己
@@ -197,14 +198,8 @@ def _demo_net_type(ip):
     return ""
 
 
-def list_ipv4():
-    """
-    列出本机所有已启用网卡的 IPv4：[{ip, prefix, bcast, index}]。
-
-    走 iphlpapi 的 GetIpAddrTable，拿得到掩码才能算子网广播地址——
-    Windows 上只发 255.255.255.255 时，系统只挑一块网卡发出去，
-    一旦那块是 VMware/Hyper-V/VPN 的虚拟网卡，真实局域网就永远收不到。
-    """
+def _ipv4_table_windows():
+    """Windows：走 iphlpapi 的 GetIpAddrTable。返回 (rows, seen)。"""
     out = []
     seen = set()
     try:
@@ -254,6 +249,122 @@ def list_ipv4():
                         "bcast": bcast, "index": index})
     except Exception:
         out = []
+        seen = set()
+    return out, seen
+
+
+def _row_from_ip(ip, mask, index):
+    """把 ip + 点分掩码 变成统一的行格式；不合法返回 None。"""
+    if not ip or not mask:
+        return None
+    if ip.startswith(("127.", "0.", "169.254.", "255.")):
+        return None
+    try:
+        ip_i = struct.unpack(">I", socket.inet_aton(ip))[0]
+        mask_i = struct.unpack(">I", socket.inet_aton(mask))[0]
+    except Exception:
+        return None
+    prefix = bin(mask_i).count("1")
+    if prefix == 0 or prefix >= 32:
+        return None
+    bcast = socket.inet_ntoa(struct.pack(">I", ip_i | (~mask_i & 0xFFFFFFFF)))
+    return {"ip": ip, "prefix": prefix, "bcast": bcast, "index": index}
+
+
+def _ipv4_posix_ioctl():
+    """
+    Linux：SIOCGIFADDR 逐个网卡取地址，SIOCGIFNETMASK 取掩码。
+
+    为什么不用 socket.gethostbyname_ex(hostname)：Linux 的 /etc/hosts 里
+    主机名往往只映射到 127.0.1.1，多网卡机器上等于什么都没拿到 ——
+    而拿不到子网广播地址，发现包就只会从系统默认那块网卡出去，
+    机器上一旦有 docker0 / virbr0 / VPN，真实的局域网就永远收不到。
+    纯标准库，不依赖 iproute2 是否装全。
+    """
+    out = []
+    seen = set()
+    try:
+        import fcntl
+        SIOCGIFFLAGS, SIOCGIFADDR, SIOCGIFNETMASK = 0x8913, 0x8915, 0x891B
+        IFF_UP, IFF_LOOPBACK = 0x1, 0x8
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            for index, name in socket.if_nameindex():
+                try:
+                    req = struct.pack("256s", name[:15].encode("utf-8"))
+                    flags = struct.unpack(
+                        "H", fcntl.ioctl(s, SIOCGIFFLAGS, req)[16:18])[0]
+                    if not (flags & IFF_UP) or (flags & IFF_LOOPBACK):
+                        continue
+                    ip = socket.inet_ntoa(fcntl.ioctl(s, SIOCGIFADDR, req)[20:24])
+                    mask = socket.inet_ntoa(
+                        fcntl.ioctl(s, SIOCGIFNETMASK, req)[20:24])
+                except Exception:
+                    continue
+                row = _row_from_ip(ip, mask, index)
+                if row and row["ip"] not in seen:
+                    seen.add(row["ip"])
+                    out.append(row)
+        finally:
+            s.close()
+    except Exception:
+        pass
+    return out, seen
+
+
+def _ipv4_posix_cmd():
+    """ioctl 不可用时的兜底：解析 `ip -4 -o addr show`。"""
+    out = []
+    seen = set()
+    try:
+        import subprocess
+        txt = subprocess.run(["ip", "-4", "-o", "addr", "show"],
+                             capture_output=True, timeout=4).stdout
+        txt = txt.decode("utf-8", "replace")
+    except Exception:
+        return out, seen
+    for line in txt.splitlines():
+        parts = line.split()
+        ip = mask = ""
+        for i, tok in enumerate(parts):
+            if tok == "inet" and i + 1 < len(parts):
+                cidr = parts[i + 1]
+                if "/" in cidr:
+                    ip, bits = cidr.split("/", 1)
+                    try:
+                        mask = socket.inet_ntoa(
+                            struct.pack(">I", (0xFFFFFFFF << (32 - int(bits)))
+                                        & 0xFFFFFFFF))
+                    except Exception:
+                        mask = ""
+                else:
+                    ip = cidr
+            elif tok == "brd" and i + 1 < len(parts):
+                pass                      # 广播地址我们自己按掩码算，更可靠
+        row = _row_from_ip(ip, mask, 0)
+        if row and row["ip"] not in seen:
+            seen.add(row["ip"])
+            out.append(row)
+    return out, seen
+
+
+def list_ipv4():
+    """
+    列出本机所有已启用网卡的 IPv4：[{ip, prefix, bcast, index}]。
+
+    Windows 走 iphlpapi 的 GetIpAddrTable；Linux 走 ioctl（失败退回 ip 命令）。
+    两条路都必须给出**子网广播地址** —— Windows 上只发 255.255.255.255 时，
+    系统只挑一块网卡发出去，一旦那块是 VMware/Hyper-V/VPN 的虚拟网卡，
+    真实局域网就永远收不到。Linux 同理，docker0 抢走默认出口很常见。
+    """
+    if sys.platform.startswith("win"):
+        out, seen = _ipv4_table_windows()
+    elif sys.platform.startswith("linux"):
+        out, seen = _ipv4_posix_ioctl()
+        if not out:
+            out, seen = _ipv4_posix_cmd()
+    else:
+        out, seen = [], set()
 
     if not out:
         # 老系统兜底：拿不到掩码，就按 /24 猜
