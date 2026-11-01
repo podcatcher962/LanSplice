@@ -29,7 +29,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Windows 8.1 | ⚠️ Very likely works, not tested |
 | Windows 7 and older | ❌ Not supported |
 
-**One file, no decision to make: `LanSplice-v1.6.0.exe`.**
+**One file, no decision to make: `LanSplice-v1.6.1.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -408,7 +408,56 @@ An exe produced by 32-bit Python runs on both 32- and 64-bit Windows.
 
 ---
 
+## License
+
+**MIT** — full text in [LICENSE](LICENSE).
+
+In one line: **use it, change it, pass it on — just keep the copyright notice and the author's name.**
+
+| You may | |
+|---|---|
+| ✅ Use it anywhere | Home, office, as many machines as you like |
+| ✅ Modify it | No permission needed, no obligation to publish your changes |
+| ✅ Redistribute it | Original or modified, free of charge |
+| ✅ Include it in your own project | Commercial use is fine — MIT does not restrict purpose |
+
+| The one thing we ask | |
+|---|---|
+| Keep the copyright notice | Ship the copyright line and permission notice from `LICENSE` |
+| Keep the attribution | Modified builds should credit the original in About or the docs, e.g. <br>`Based on LanSplice by Lanlan Eternal (github.com/podcatcher962/LanSplice)` |
+| Don't speak for the author | If your build breaks, that is not the original author's doing |
+
+> Why MIT and not GPL/MPL: GPL requires you to publish the source when you
+> **distribute** a modified build, which puts off people who only want a small
+> private tweak. MIT asks for nothing except that the name stays visible — and
+> that part is not optional; it is the only thing this licence asks you to do.
+
+Third-party components (Python, tkinter, cryptography, PyInstaller) keep their own licences,
+independent of this project's MIT terms.
+
+---
+
+---
+
 ## Changelog
+
+**v1.6.1** — see what was transferred, saved mirror jobs, send from Explorer
+- **File names in transfer history**: "2 files, 17 MB, 2 ok" never told you *which* two.
+  There is now a Name column — a single file shows its name, several show
+  `driver-x64.zip and 4 more`; double-click a row for details: the full list, which
+  one failed, and why (e.g. "peer has only 0.4 GB free")
+- **Old records get names too**: history written by v1.6.0 has no name field, so it is
+  derived from the stored paths on read — no blank rows after upgrading
+- **Saved mirror jobs**: syncing the same pair of folders every week meant picking both
+  directories again each time. The mirror window now has a Saved jobs row; pick one and
+  both fields are filled. The same pair is never saved twice, up to 12 entries
+- **Send from Explorer**: Settings → Explorer right-click send adds "Send with LanSplice"
+  to any file or folder's context menu; the path lands in the queue. Selections are
+  merged, and the app opens if it was not running. HKCU only — no admin needed
+- **Licence and credit**: added the MIT licence (`LICENSE` plus a README section), the
+  About window now states it, and Help → License & credit spells out what you may do
+  and the single thing we ask for
+- 74 new automated checks; the suite went from 428 to **496**
 
 **v1.6.0** — stability wrap-up: one instance, firewall re-allow, transfer history
 - **Only one instance runs**: double-clicking twice no longer starts two processes fighting over
