@@ -38,8 +38,9 @@ systemd 留的 —— 服务器上没有桌面，但一样要收文件。
 ```
 install.sh
 link2pc_core.py   link2pc_cli.py   link2pc_paths.py
-link2pc_history.py link2pc_i18n.py
+link2pc_history.py link2pc_i18n.py link2pc_deps.py
 link2pc_web.py    link2pc_gui.py   link2pc_tray.py
+wheels/           （UOS 20 x86_64 的离线加密依赖）
 app.ico  README.md  LICENSE
 ```
 
@@ -49,28 +50,25 @@ app.ico  README.md  LICENSE
 sudo sh install.sh
 ```
 
-脚本会做四件事：检查 Python 版本（要 3.7+）、装 `python3-cryptography`、
-把文件放到 `/opt/lansplice`、生成 `/usr/local/bin/lansplice`。
+脚本会检查 Python 版本（要 3.7+），按「系统已有 → 随包离线依赖 →
+系统软件源」的顺序准备 `cryptography`，再把文件放到 `/opt/lansplice`、
+生成 `/usr/local/bin/lansplice`，最后真跑一次 `lansplice version` 验收入口。
 
 卸载：`sudo sh install.sh --uninstall`（配置和历史不会删）。
 
-### 离线环境
+### 离线环境（UOS 20 已实测）
 
-信创机器大多是物理隔离内网，`pip` 根本连不出去。这时**不要**用 pip：
+信创机器大多是物理隔离内网，`pip` 根本连不出去。**不要单独只拷几个
+`.py` 文件**，请使用完整的 `LanSplice-v1.7.2-linux-kit.tar.gz`。
 
-```sh
-# 检查系统是否自带
-python3 -c "import cryptography; print(cryptography.__version__)"
-```
+UOS 20 专业版实测可能同时缺少 `cryptography` 和 `pip3`，apt 还会报
+「无法定位软件包 python3-cryptography」。完整包因此自带四个 wheel：
+cryptography 3.3.2、cffi 1.15.1、pycparser 2.21、six 1.16.0。
+在 **Python 3.7 / x86_64** 上，`install.sh` 会把它们解到
+`/opt/lansplice/vendor`，程序启动时自动识别，全程不需要 pip、apt 或联网。
 
-UOS 20 和麒麟 V10 都预装了这个包（`python3-cryptography`）。万一没有，
-从系统安装光盘或内网源装同一个包，别从 PyPI 拉。
-
-实在只有 wheel 文件时：
-
-```sh
-pip3 install --no-index --find-links . cryptography-*.whl
-```
+其他 Python 版本和 CPU 架构不混用这套二进制轮子：优先从系统光盘或内网源
+安装 `python3-cryptography`。程序不会为了绕过缺库而降级成不加密传输。
 
 ### 为什么不是单文件 exe 那样的一坨
 
@@ -94,7 +92,7 @@ lansplice serve
 ==========================================================
 LanSplice 1.7.0 · 接收端
   监听 192.168.1.30:47820
-接收目录 /home/lanlan/Downloads/LanSplice
+接收目录 /home/yourname/Downloads/LanSplice
 配对码 K7QM-3XPD-R9TB-WVZE（对端 send 时用 --code 传这个）
 ==========================================================
 本机原来没有配对码，已生成并保存：K7QM-3XPD-R9TB-WVZE（对端填这个）
@@ -132,7 +130,7 @@ lansplice serve
 ### 2. 发文件
 
 ```sh
-lansplice send /home/lanlan/报表.xlsx --to 192.168.1.20
+lansplice send /home/yourname/报表.xlsx --to 192.168.1.20
 lansplice send /data/备份 --to 192.168.1.20:47820
 lansplice send "/data/音乐/*.flac" --to 192.168.1.20 --verify
 ```
@@ -198,7 +196,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=lanlan
+User=yourname
 ExecStart=/usr/local/bin/lansplice serve --root /srv/inbox
 Restart=always
 RestartSec=5
@@ -260,7 +258,10 @@ Windows 侧不需要任何额外设置，还是原来的图形界面。
 | 收不到但端口是通的 | 麒麟安全中心另有一层防火墙 | 图形界面里也放行 47820 |
 | `devices` 空列表 | UDP 47821 被挡 / 对端 `--no-discovery` | 放行 UDP，或直接写 IP |
 | 文件落在 `/root/` 下 | systemd 里没写 `User=` | 加上 `User=你的用户名` |
+| `lansplice: command not found` | `/usr/local/bin` 不在 PATH 里 | 安装时会自动写 `/etc/profile.d/lansplice.sh`，**新开一个终端**即可；当前终端先执行 `export PATH="$PATH:/usr/local/bin"`（UOS 20 的 root shell 实测就是这个情况） |
 | 传大文件中途断了 | 网络抖动 | 重跑同一条 `send`，会从断点接着传 |
+
+**桌面上点图标没问题，只有终端里敲命令才受影响** —— 图标写的是绝对路径。
 
 ---
 
