@@ -17,11 +17,14 @@ LanSplice 命令行
 import os
 import sys
 import glob
+import json
 import time
 import base64
+import threading
 import argparse
 
 import link2pc_core as L
+import link2pc_paths as _paths
 from link2pc_i18n import t as _t
 
 
@@ -93,13 +96,26 @@ def _attach_console():
 
 
 def _cfg():
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    p = os.path.join(base, "LanSplice", "config.json")
+    p = _paths.config_file()
     try:
-        import json
         return json.load(open(p, encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _save_cfg(d):
+    """只在「配置里根本没有配对码」时写一次，避免和图形界面抢同一份配置。"""
+    try:
+        _paths.ensure(os.path.dirname(_paths.config_file()))
+        with open(_paths.config_file(), "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        try:
+            os.chmod(_paths.config_file(), 0o600)   # 里面有配对码，别让同机别人读到
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 def _pair_key(cfg, code):
@@ -258,6 +274,145 @@ def cmd_version(a):
     return 0
 
 
+# ---------------------------------------------------------------- 接收
+
+def cmd_serve(a):
+    """
+    只收不发：把本机当成一个「收件箱」。
+
+    存在的理由：信创机器、服务器、装在角落的备份机，往往不跑桌面环境，
+    图形界面根本起不来。这种情况下 `lansplice serve` 是唯一能收文件的形态。
+    Windows 上照样能用 —— 丢进任务计划，开机就等着收。
+
+    配对码的处理：配置里没有就现场生成一个并存下来，同时打出来。
+    否则用户在一台没开过界面的机器上只会看到「没有配对码」，无从下手。
+    """
+    cfg = _cfg()
+    new_code = ""
+    if not a.code and not cfg.get("pair_key"):
+        key_new = L.new_pair_key()
+        cfg["pair_key"] = base64.b64encode(key_new).decode()
+        new_code = L.key_to_code(key_new)
+        _save_cfg(cfg)
+    key = _pair_key(cfg, a.code)
+
+    root = os.path.abspath(os.path.expanduser(a.root or _paths.default_recv_root()))
+    _paths.ensure(root)
+    if not os.path.isdir(root):
+        print(_t("cli16") % root)
+        return 2
+
+    port = int(a.port or cfg.get("tcp_port") or L.TCP_PORT)
+    lock = threading.Lock()
+    bar = {"last": 0.0}
+    mark = {"last": time.time()}        # 最后一次传输活动，--once 用它判断「这批完了」
+    got = {"n": 0, "bytes": 0, "fail": 0}
+
+    def out(s):
+        # 进度条来自服务端线程，主线程也在打摘要，串了会花屏
+        with lock:
+            try:
+                sys.stdout.write(s)
+                sys.stdout.flush()
+            except Exception:
+                pass
+
+    def log(s):
+        out("\n" + str(s) + "\n")
+
+    def on_progress(path, done, total):
+        now = time.time()
+        if now - bar["last"] < 0.1 and done < total:
+            return
+        bar["last"] = now
+        pct = int(done * 100 / total) if total else 100
+        w = 24
+        filled = int(w * pct / 100)
+        name = os.path.basename(path) or path
+        out("\r  [%s] %3d%%  %8s / %s  %s" % (
+            "#" * filled + "-" * (w - filled), pct,
+            L.human_size(done), L.human_size(total), name[:32]))
+
+    def notify(kind, d):
+        d = d or {}
+        mark["last"] = time.time()
+        if kind == "recv_begin":
+            bar["last"] = 0.0
+            out("\n" + _t("cli19") % (
+                os.path.basename(d.get("path") or ""),
+                L.human_size(int(d.get("size") or 0))) + "\n")
+            if d.get("offset"):
+                out(_t("cli20") % L.human_size(int(d.get("offset") or 0)) + "\n")
+        elif kind == "recv_progress":
+            on_progress(d.get("path") or "", int(d.get("done") or 0),
+                        int(d.get("total") or 0))
+        elif kind == "recv_done":
+            got["n"] += 1
+            got["bytes"] += int(d.get("size") or 0)
+            out("\n" + _t("cli21") % (
+                os.path.basename(d.get("path") or ""),
+                L.human_size(int(d.get("size") or 0))) + "\n")
+        elif kind == "recv_error":
+            got["fail"] += 1
+            out("\n" + _t("cli22") % (d.get("path") or "",
+                                      d.get("msg") or "") + "\n")
+        elif kind == "recv_text":
+            out("\n" + _t("cli23") % ((d.get("body") or "")[:200]) + "\n")
+
+    srv = L.PeerServer(root, key, port=port, log=log, notify=notify,
+                       allow_discovery=not a.no_discovery)
+    srv.start_server()
+    # bind 是异步的（在 run 里），等它真起来再报「可以了」
+    for _ in range(80):
+        if srv.running or srv.error:
+            break
+        time.sleep(0.05)
+    if not srv.running:
+        print(_t("cli17") % (port, srv.error or "?"))
+        return 2
+
+    ips = L.local_ips() or ["127.0.0.1"]
+    print("=" * 58)
+    print(_t("cli14") % L.APP_VER)
+    for ip in ips:
+        print("  " + _t("cli18") % (ip, srv.port))
+    print(_t("cli24") % root)
+    print(_t("cli25") % L.key_to_code(key))
+    print("=" * 58)
+    if new_code:
+        print(_t("cli15") % new_code)
+    print(_t("cli26"))
+
+    t0 = time.time()
+    interrupted = False
+    try:
+        while srv.running:
+            time.sleep(0.15)
+            if a.timeout and time.time() - t0 >= a.timeout:
+                break
+            # 一批文件是一个连接连续推过来的；每个文件开始都会刷新 mark，
+            # 所以「静了 2 秒」就等于这批传完了
+            if a.once and got["n"] and time.time() - mark["last"] > 2.0:
+                break
+    except KeyboardInterrupt:
+        interrupted = True
+        out("\n")
+
+    secs = max(0.001, time.time() - t0)
+    try:
+        srv.stop_server()
+    except Exception:
+        pass
+    out("\n" + "-" * 58 + "\n")
+    out(_t("cli27") % (got["n"], L.human_size(got["bytes"]), got["fail"], secs) + "\n")
+    if interrupted:
+        return 0
+    if a.once:
+        # 脚本里用它判断「到底收到没有」：一个都没收到就该报错
+        return 0 if got["n"] else 1
+    return 0
+
+
 # ---------------------------------------------------------------- 入口
 
 def main(argv=None):
@@ -283,6 +438,17 @@ def main(argv=None):
     d = sub.add_parser("devices", help="扫描局域网里的设备")
     d.add_argument("--timeout", type=float, default=1.5)
 
+    v = sub.add_parser("serve", help="作为接收端常驻（不装桌面也能收文件）")
+    v.add_argument("--root", help="收到的文件放这里（默认 下载/LanSplice）")
+    v.add_argument("--port", type=int, default=0, help="监听端口（默认用配置里的）")
+    v.add_argument("--code", help="配对码（默认用本机配置里的）")
+    v.add_argument("--once", action="store_true",
+                   help="收完一批就退出（脚本与自测用）")
+    v.add_argument("--timeout", type=float, default=0,
+                   help="最多等这么多秒，0 表示一直等")
+    v.add_argument("--no-discovery", action="store_true",
+                   help="不响应局域网的自动查找")
+
     sub.add_parser("version", help="显示版本")
 
     a = p.parse_args(argv)
@@ -290,7 +456,20 @@ def main(argv=None):
         return cmd_send(a)
     if a.cmd == "devices":
         return cmd_devices(a)
+    if a.cmd == "serve":
+        return cmd_serve(a)
     if a.cmd == "version":
         return cmd_version(a)
     p.print_help()
     return 1
+
+
+if __name__ == "__main__":
+    # Linux 上这个文件是直接当脚本跑的（见 install.sh 生成的 lansplice 启动器）。
+    # 不带参数时 main() 返回 None —— 那是给图形界面留的「交回 GUI」信号，
+    # 可在只有命令行的机器上必须说句话，否则就是「敲了没反应」。
+    _rc = main()
+    if _rc is None:
+        print(_t("cli28"))
+        _rc = 1
+    sys.exit(_rc)
