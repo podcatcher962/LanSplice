@@ -230,7 +230,7 @@ LanSplice.exe version
 飞腾 / 鲲鹏（ARM64）、海光 / 兆芯（x86_64）、龙芯（LoongArch）之间照样互通 ——
 协议是字节级的，跟 CPU 架构无关。
 
-下载 **[LanSplice-1.7.3-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.3-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
+下载 **[LanSplice-1.7.4-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.4-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
 
 ```sh
 sudo sh install.sh
@@ -499,6 +499,11 @@ pyinstaller -F -w --name LanSplice \
 
 ## 更新记录
 
+**v1.7.4** — 修掉「一键放行之后防火墙还是红的」
+- **状态判据错了，不是放行失败**：v1.7.3 把规则改成按端口建之后，`Program` 字段从 exe 路径变成 `Any`，而状态检查还在拿路径去比 —— `Any` 被当成一个叫 `Any` 的路径，永远对不上，于是灯**恒红**，点了放行也红。现在按端口的规则看端口、按程序的规则看程序，分开判
+- **为什么另一台一直是绿的**：那台机器上留着 Windows 弹窗时自动建的 `lansplice-vX.Y.Z` 规则（带 exe 路径），恰好满足旧判据 —— 跟我们的规则无关，属于巧合。现在两台判据一致
+- **放行后会自己复查**：脚本跑完不再是「数了几条规则就报成功」，而是用状态灯同一套判据再验一遍；没生效会直说原因（UAC 被取消 / 域策略 / 第三方安全软件），不再让人对着红灯猜
+- 放行时删旧规则改成按名字过滤，规则上千条的机器不用再等好几秒
 **v1.7.3** — 内网多人聊天；点关闭先问你；修掉任务栏重复图标
 - **内网聊天（多机、不要服务器）**：几台电脑在同一局域网，`文件 → 内网聊天…`
   （Ctrl+M）就能互相说话。**没有主机** —— 每台都是平等节点，谁关机都不影响
