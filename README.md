@@ -27,7 +27,7 @@
 | Windows 8.1 | ⚠️ 大概率能跑，未实测 |
 | Windows 7 及更早 | ❌ 不支持 |
 
-**只有一个文件，不用挑：`LanSplice-v1.6.1.exe`。**
+**只有一个文件，不用挑：`LanSplice-v1.7.0.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
@@ -176,6 +176,9 @@ LanSplice.exe send "D:\日志\*.log" --to 192.168.1.20
 :: 扫一遍局域网，看谁开着 LanSplice
 LanSplice.exe devices
 
+:: 当接收端（不打开界面，只等着收）
+LanSplice.exe serve --root "D:\收件箱"
+
 :: 看版本
 LanSplice.exe version
 ```
@@ -214,6 +217,35 @@ LanSplice.exe version
 用户点完发送得盯着空屏幕十几秒，跟卡死没区别。
 
 **不带任何参数**启动，就是原来的图形界面，习惯不变。
+
+---
+
+## Linux / 信创系统
+
+同一份代码在 Linux 上也能跑，只是这一版**只有命令行**（图形界面在排期）。
+统信 UOS、银河麒麟 V10、深度、Ubuntu、Debian、CentOS、openEuler 都适用；
+飞腾 / 鲲鹏（ARM64）、海光 / 兆芯（x86_64）、龙芯（LoongArch）之间照样互通 ——
+协议是字节级的，跟 CPU 架构无关。
+
+```sh
+sudo sh install.sh
+
+lansplice serve                              # 当接收端，配对码会打印出来
+lansplice send 报表.xlsx --to 192.168.1.20   # 发给 Windows 那台
+lansplice devices                            # 扫局域网看谁在收
+```
+
+- 依赖只有 `cryptography` 一个库：UOS 20 与麒麟 V10 都预装 `python3-cryptography`，
+  **物理隔离的内网不需要 pip**
+- 装成目录版而不是单文件：麒麟默认开 SELinux，单文件程序解包到 `/tmp` 会被策略拦下
+- 配置在 `~/.config/LanSplice`，传输历史在 `~/.local/share/LanSplice`
+- 防火墙放行 **TCP 47820**（收文件）和 **UDP 47821**（自动发现）
+
+**配对码两边必须一致。** Linux 上 `serve` 启动时会把码打出来，粘到 Windows 的
+「文件 → 输入配对码」；反过来也行（Windows 显示配对码，Linux 用 `--code` 指定）。
+
+`serve` 的 `--once` 收完一批就退出，方便塞进脚本；退出码 `0` 表示收到了，
+`1` 表示一个都没收到。细节与排错见 [docs/linux.md](docs/linux.md)。
 
 ---
 
@@ -444,6 +476,30 @@ pyinstaller -F -w --name LanSplice \
 ---
 
 ## 更新记录
+
+**v1.7.0** — 上 Linux / 信创：命令行接收端、跨平台目录、Linux 网卡枚举
+- **`serve` 子命令**：不打开界面也能当接收端，`lansplice serve` 直接等着收。
+  `--root` 指定收件目录、`--once` 收完一批就退出（退出码 0 收到 / 1 没收到）、
+  `--timeout` 限时、`--no-discovery` 关掉自动发现。控制台实时显示进度，
+  收完给一行摘要。Windows 上的 exe 同样可用，适合丢进计划任务
+- **Linux 上第一次装不用先配对**：配置里没有配对码时，`serve` 现场生成一个、
+  存进 `~/.config/LanSplice/config.json`（权限 600）并打印出来，照着填到对端即可
+- **目录规则分平台**：Linux 按 XDG 规范，配置进 `~/.config/LanSplice`、
+  历史进 `~/.local/share/LanSplice`；**Windows 仍是 `%APPDATA%\LanSplice`，
+  升级不丢配置和传输历史**
+- **Linux 网卡枚举**：走 `ioctl`（SIOCGIFADDR / SIOCGIFNETMASK）拿地址和掩码，
+  自己算子网广播地址，失败再退回解析 `ip -4 -o addr`。以前只能靠
+  `gethostbyname_ex(hostname)`，而 Linux 上主机名通常只映射到 127.0.1.1 ——
+  多网卡机器（docker0 / virbr0 / VPN）就永远发现不到对端
+- **`install.sh`**：检查 Python ≥ 3.7、按发行版装 `python3-cryptography`、
+  装到 `/opt/lansplice`、生成 `/usr/local/bin/lansplice`、自动放行 47820/47821，
+  支持 `--uninstall`。离线环境给出三条不用 pip 的路
+- 文档 [docs/linux.md](docs/linux.md)：统信 / 麒麟的安装、防火墙、systemd 自启、
+  常见问题对照表
+- 新增 72 项测试（目录规则三平台、XDG 边界、掩码算广播、`ip` 输出解析、
+  serve 真收文件并核对 SHA-256、新机器生成配对码、顶层无 Windows 专属导入、
+  安装脚本与文档要点）；自动化检查从 496 项增加到 **568 项**
+- 仍待做：Linux 图形界面（P5）、`.deb` 包与各架构真机验证（P6）
 
 **v1.6.1** — 历史看得见传了什么、镜像任务可收藏、右键直接发送
 - **传输历史带文件名**：以前只有「2 个文件 17 MB 成功 2」，
