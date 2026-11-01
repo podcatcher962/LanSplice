@@ -1,7 +1,7 @@
 # macOS 使用指南（未签名版）
 
 LanSplice 在 macOS 上是**源码 / .app 双形态**，全部免费、无广告、不联网上报。
-这一版**未做 Apple 签名与公证**（那需要 Apple 开发者账号，688 元/年），
+这一版**未做 Apple 签名与公证**（那需要 Apple 开发者账号，约 688 元/年，即 $99），
 所以第一次打开要走一个一次性步骤，见下文「第一次打开」。
 
 ---
@@ -16,8 +16,9 @@ LanSplice 在 macOS 上是**源码 / .app 双形态**，全部免费、无广告
 |---|---|---|
 | 传输协议、加密、断点续传 | ✅ 已验证 | 纯标准库 + cryptography，与平台无关；在 Windows 与 UOS 20 真机上跑通 |
 | 命令行（`serve` / `send` / `devices`） | ✅ 代码层面已验证 | 与 Linux 版是同一份代码，Linux 真机 44 项全过 |
+| 内网聊天 | ⚠️ 仅代码层面 | 与 Windows / Linux 同一份实现（无服务器、全互联），那边有真机证据，macOS 没有 |
 | 图形界面 | ⚠️ **未在 Mac 上运行过** | tkinter 跨平台，但没有 Mac 就没有实机证据 |
-| `build_macos.sh` 打包 | ⚠️ **未执行过** | PyInstaller 不能交叉编译，只能在 Mac 上跑，所以我这边无法预演 |
+| `build_macos.sh` 打包 | ⚠️ **未在 Mac 上执行过** | 见下方「v1.7.4 修掉的路径 bug」—— 修了，但修得对不对只有 Mac 能证明 |
 | LaunchAgent 开机自启 | ⚠️ 仅单元测试 | 生成的 plist 结构与内容有测试覆盖，但没在真机上被 launchd 加载过 |
 | Finder 复制后粘贴发送 | ⚠️ 仅单元测试 | osascript 脚本逻辑有测试，没有真机剪贴板验证 |
 
@@ -26,6 +27,20 @@ LanSplice 在 macOS 上是**源码 / .app 双形态**，全部免费、无广告
 `python3 mac_check.py --full`，十几秒就能把上面那些 ⚠️ 变成 ✅ 或 ❌。
 
 如果自检报错，把输出发到仓库的 Issues 里就行。
+
+### v1.7.4 修掉的路径 bug（重要）
+
+`_build/Link2PC-mac.spec` 原来用 `__file__` 定位源码。但 PyInstaller
+执行 spec 之前会 `chdir` 到 spec 所在目录（`_build/`），于是它去找
+`_build/link2pc_gui.py` —— 那里没有这个文件，**任何人跑 `build_macos.sh`
+都会在第一步就失败**，报「找不到入口脚本」。
+
+已经改成用 PyInstaller 提供的 `SPECPATH` 求仓库根，并且在 Windows 上
+用桩环境跑过一遍验证（`_tests/_test_macpack.py`，46 项）。
+同时补了两个同样「静默坏掉」的问题：`hiddenimports` 漏了聊天模块、
+版本号写死在 spec 里。
+
+**如果你在 v1.7.4 之前拿过这个仓库，请更新后再打包。**
 
 ---
 
@@ -61,7 +76,7 @@ sh build_macos.sh             # 打包（第一次联网装 pyinstaller，约 2-
 ## 三、第一次打开（未签名，只需一次）
 
 双击 .app 会被 Gatekeeper 拦（「无法打开，因为无法验证开发者」或「已损坏」）。
-这不是病毒，只是没有 99 美元年费的签名。三选一：
+这不是病毒，只是没有 Apple 开发者账号（约 688 元/年）的签名。三选一：
 
 | 办法 | 操作 |
 |---|---|
@@ -75,6 +90,7 @@ sh build_macos.sh             # 打包（第一次联网装 pyinstaller，约 2-
 |---|---|
 | 局域网收发、断点续传、配对码、AES-256-GCM 加密 | ✅ 与 Windows / Linux 完全互通（协议是字节级的） |
 | 图形界面、中文界面 | ✅ 苹方字体自动挑选 |
+| **内网聊天**（多人、不用服务器） | ✅ 与 Windows / Linux 同一实现；无主机、全互联 |
 | 接收目录 | 默认 `~/Downloads/LanSplice`（下载里的 LanSplice 文件夹），可改 |
 | 「在 Finder 中显示」 | ✅ |
 | 在 Finder 复制文件后在 LanSplice 里粘贴发送 | ✅（v1.7.2 新增，走 osascript） |
