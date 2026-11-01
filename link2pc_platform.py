@@ -184,15 +184,19 @@ def autostart_cmd():
     """
     开机要执行的那条命令。
 
-    打包成 exe：exe 自己的路径。
+    打包成 exe：exe 自己的路径，带 --min（开机时不弹窗，直接缩托盘）。
     从源码跑：python3 -B 脚本路径（-B 是不写 __pycache__，
     装在 /opt 下普通用户改不动，会一直刷权限警告）。
+
+    --min 只给 Windows：那边有托盘，缩进去还能叫出来；
+    Linux 上关窗口就是退出，缩进去等于开完机什么都没有。
     """
+    flag = " --min" if IS_WIN else ""
     if getattr(sys, "frozen", False):
-        return '"%s" --min' % os.path.abspath(sys.executable)
+        return '"%s"%s' % (os.path.abspath(sys.executable), flag)
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "link2pc_gui.py")
-    return "%s -B %s --min" % (sys.executable or "python3", script)
+    return "%s -B %s%s" % (sys.executable or "python3", script, flag)
 
 
 def autostart_get():
