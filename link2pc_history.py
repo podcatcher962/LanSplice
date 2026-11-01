@@ -2,7 +2,8 @@
 """
 传输历史
 ========
-一行一条 JSON 追加到 %APPDATA%\\LanSplice\\history.jsonl。
+一行一条 JSON 追加到 link2pc_paths.data_dir() 下的 history.jsonl
+（Windows 是 %APPDATA%\\LanSplice，Linux 是 ~/.local/share/LanSplice）。
 
 为什么不用 config.json
 ----------------------
@@ -18,6 +19,8 @@
 import os
 import json
 import threading
+
+import link2pc_paths as _paths
 
 MAX_ENTRIES = 500
 MAX_NAMES = 40          # 每条记录最多留这么多个文件名，够看清传了什么
@@ -52,9 +55,13 @@ def clean_names(seq, limit=MAX_NAMES):
 
 
 def hist_path(cfg_dir=None):
-    """history.jsonl 的位置；cfg_dir 只给测试用。"""
-    base = cfg_dir or os.path.join(
-        os.environ.get("APPDATA", os.path.expanduser("~")), "LanSplice")
+    """
+    history.jsonl 的位置；cfg_dir 只给测试用。
+
+    目录由 link2pc_paths 决定：Windows 仍是 %APPDATA%\\LanSplice（老历史不会丢），
+    Linux/macOS 走各自规范位置。
+    """
+    base = cfg_dir or _paths.data_dir()
     return os.path.join(base, "history.jsonl")
 
 
