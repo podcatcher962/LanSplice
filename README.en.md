@@ -241,7 +241,7 @@ UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium /
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
-Download **[LanSplice-1.7.3-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.3-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
+Download **[LanSplice-1.7.4-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.4-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
 
 ```sh
 sudo sh install.sh
@@ -489,6 +489,11 @@ independent of this project's MIT terms.
 
 ## Changelog
 
+**v1.7.4** — fixes "the firewall light stays red after one-click allow"
+- **The status check was wrong, not the allow step**: v1.7.3 moved rules to be port-scoped, so `Program` became `Any`. The check still compared program paths, treated `Any` as a path named `Any`, and therefore *always* reported a stale rule — even right after allowing. Port-scoped rules are now judged by port, program-scoped rules by program
+- **Why the other machine always looked green**: it still had an auto-created `lansplice-vX.Y.Z` rule (with an exe path) from a Windows prompt, which happened to satisfy the old check. Coincidence, not correctness
+- **The allow step now re-checks itself** with the same criteria the status light uses, and says why it failed (cancelled UAC, domain policy, security suite) instead of leaving you staring at a red light
+- Deleting old rules now filters by name instead of walking every rule on the machine
 **v1.7.3** — closing now asks first: minimise to tray or quit; fixes duplicate taskbar icons
 **v1.7.2** — UOS 20 installs without pip or a working package repository; native macOS support
 - **Fixes a real Xinchuang startup failure**: UOS 20 Professional may have neither
