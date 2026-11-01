@@ -458,6 +458,94 @@ def _focus_win():
         return False
 
 
+# ---------------------------------------------------------------- 任务栏图标
+
+def _top_hwnd(tk_window):
+    """
+    Tk 的 winfo_id() 拿到的是子窗口句柄，任务栏认的是最外层那个。
+
+    一路 GetParent 往上走，直到没有父窗口为止。
+    """
+    if not IS_WIN:
+        return 0
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        h = int(tk_window.winfo_id())
+        for _ in range(8):
+            p = u.GetParent(h)
+            if not p:
+                break
+            h = p
+        return h
+    except Exception:
+        return 0
+
+
+def taskbar_set_visible(tk_window, show):
+    """
+    让窗口从任务栏消失 / 回到任务栏。
+
+    Windows 判断一个窗口要不要在任务栏露脸，看有没有 WS_EX_TOOLWINDOW。
+    Tk 的 withdraw() 只是把它藏起来（WS_EX 一个位都不动），
+    任务栏按钮有时候照样留着；等 deiconify() 的时候，
+    系统又当成新冒出来的窗口再挂一个 —— 于是就出现「两个图标」。
+
+    这里显式改扩展样式：藏起来时打上 TOOLWINDOW（任务栏必定撤掉按钮），
+    显示时再清掉（任务栏重新挂一个，而且只有一个）。
+
+    失败就算了，窗口本身照常显示，不影响任何功能。
+    """
+    if not IS_WIN:
+        return False
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_APPWINDOW = 0x00040000
+        hwnd = _top_hwnd(tk_window)
+        if not hwnd:
+            return False
+        ex = u.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
+        if show:
+            new = ex & ~WS_EX_TOOLWINDOW
+        else:
+            new = (ex | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+        if new != ex:
+            u.SetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE, new)
+            # 改完扩展样式要触发一次重算，任务栏才会立刻反应
+            SW_HIDE, SW_SHOW = 0, 5
+            if show:
+                u.ShowWindow(ctypes.c_void_p(hwnd), SW_HIDE)
+                u.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOW)
+        return True
+    except Exception:
+        return False
+
+
+def taskbar_in_taskbar(tk_window):
+    """测试用：这个窗口现在挂没挂任务栏按钮。"""
+    if not IS_WIN:
+        return False
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_APPWINDOW = 0x00040000
+        hwnd = _top_hwnd(tk_window)
+        if not hwnd:
+            return False
+        ex = u.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
+        vis = bool(u.IsWindowVisible(ctypes.c_void_p(hwnd)))
+        owner = u.GetWindow(ctypes.c_void_p(hwnd), 4)
+        return bool(vis and not (ex & WS_EX_TOOLWINDOW)
+                    and ((ex & WS_EX_APPWINDOW) or not owner))
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------- 剪贴板文件
 
 CF_HDROP = 15
