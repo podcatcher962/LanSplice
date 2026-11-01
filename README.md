@@ -26,8 +26,11 @@
 | **Windows 10**（32 位 / 64 位） | ✅ 支持，主要开发和测试环境 |
 | Windows 8.1 | ⚠️ 大概率能跑，未实测 |
 | Windows 7 及更早 | ❌ 不支持 |
+| **统信 UOS / 银河麒麟 V10 / Deepin / Ubuntu** | ✅ 支持（图形界面 + 命令行），见 [docs/linux.md](docs/linux.md) |
+| 飞腾 / 鲲鹏 / 龙芯 | ⚠️ 协议与架构无关，但**尚未在真机上验证** |
+| macOS | ❌ 没有原生版，只能用浏览器方式（[docs/mac-now.md](docs/mac-now.md)） |
 
-**只有一个文件，不用挑：`LanSplice-v1.7.0.exe`。**
+**Windows 只有一个文件，不用挑：`LanSplice-v1.7.1.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
@@ -476,6 +479,26 @@ pyinstaller -F -w --name LanSplice \
 ---
 
 ## 更新记录
+
+**v1.7.1** — Linux / 信创上能开窗口了
+- **图形界面在 Linux 上跑起来了**：`lansplice` 不带参数开窗口，带 `serve` /
+  `send` / `devices` 走命令行。安装脚本会往应用菜单里放一个「LanSplice」图标
+- **所有系统差异收进 `link2pc_platform.py` 一层**：开机自启、打开目录、
+  定位文件、单实例、剪贴板、防火墙、界面字体。界面代码里不再出现
+  `winreg` / `explorer` / `os.startfile` / `ctypes.wintypes`——
+  这几个任漏一个，Linux 上就是 import 阶段直接崩
+- **单实例换 flock**：Linux 用 `fcntl.flock`，内核锁，进程一死自动释放，
+  不会有「上次没退干净」的死锁文件
+- **开机自启写 `.desktop`**：`~/.config/autostart/lansplice.desktop`，
+  设置菜单里勾一下就行（Windows 那边仍是注册表，没动）
+- **防火墙改成「给命令」而不是「替你改」**：要 root、各发行版工具不同、
+  弹授权窗口在麒麟/UOS 上表现也不一致。现在按本机装的是 ufw / firewalld /
+  iptables 自动挑一条命令，复制粘到终端执行一次即可
+- **中文字体自己挑**：Noto Sans CJK → 思源黑体 → 文泉驿 → Droid Sans Fallback。
+  硬写「微软雅黑」的话，Linux 上中文会掉成方框
+- **托盘在 Linux 上不做**：要过 libappindicator / StatusNotifierItem，
+  各家实现不一。关窗口就是退出，要常驻请用 systemd（见 docs/linux.md）
+- Windows 侧行为**一个字节没变**：568 项旧测试全部原样通过
 
 **v1.7.0** — 上 Linux / 信创：命令行接收端、跨平台目录、Linux 网卡枚举
 - **`serve` 子命令**：不打开界面也能当接收端，`lansplice serve` 直接等着收。
