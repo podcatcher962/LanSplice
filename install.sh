@@ -19,8 +19,11 @@ SRC_DIR=$(cd "$(dirname "$0")" && pwd)
 
 # 装哪些文件：只装真正要跑的，_build/ _tests/ 不进目标机器
 FILES="link2pc_core.py link2pc_cli.py link2pc_gui.py link2pc_i18n.py \
-link2pc_paths.py link2pc_history.py link2pc_web.py link2pc_tray.py \
-app.ico README.md LICENSE"
+link2pc_platform.py link2pc_paths.py link2pc_history.py link2pc_web.py \
+link2pc_tray.py app.ico README.md LICENSE"
+
+DESKTOP_FILE="/usr/share/applications/lansplice.desktop"
+ICON_DIR="/usr/share/icons/hicolor"
 
 say() { printf '%s\n' "$*"; }
 die() { printf '错误：%s\n' "$*" >&2; exit 1; }
@@ -33,6 +36,7 @@ need_root() {
 if [ "$1" = "--uninstall" ]; then
     need_root
     rm -f "$BINLINK"
+    rm -f "$DESKTOP_FILE"
     rm -rf "$PREFIX"
     say "已卸载。配置和传输历史留在原位，没有删："
     say "  ~/.config/LanSplice       （配置）"
@@ -98,6 +102,33 @@ else
     say "依赖：已装好"
 fi
 
+# tkinter 是图形界面必需的，而且它不在 pip 里 —— 只能走系统包。
+# 信创最小安装常常没有，缺了就只能用命令行。
+if python3 -c 'import tkinter' >/dev/null 2>&1; then
+    say "依赖：tkinter 已有"
+else
+    say "依赖：缺 tkinter（图形界面要用），尝试用系统包管理器安装…"
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y python3-tk || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y python3-tkinter || true
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y python3-tkinter || true
+    elif command -v zypper >/dev/null 2>&1; then
+        zypper -n install python3-tk || true
+    elif command -v pacman >/dev/null 2>&1; then
+        pacman -S --noconfirm tk || true
+    fi
+    if python3 -c 'import tkinter' >/dev/null 2>&1; then
+        say "依赖：tkinter 已装好"
+    else
+        say ""
+        say "tkinter 装不上，图形界面用不了，但命令行仍然可用："
+        say "  lansplice serve / lansplice send / lansplice devices"
+        say "要图形界面的话，从系统安装光盘/内网源装 python3-tk（UOS、麒麟都提供）。"
+    fi
+fi
+
 # ---------------------------------------------------------------- 复制
 say "安装到 $PREFIX"
 mkdir -p "$PREFIX"
@@ -111,7 +142,13 @@ cat > "$BINLINK" <<EOF
 #!/bin/sh
 # LanSplice 启动器（由 install.sh 生成）
 # -B：不写 __pycache__ —— 装在 /opt 下普通用户改不动，否则每次启动都报权限警告
-exec python3 -B "$PREFIX/link2pc_cli.py" "\$@"
+#
+# 入口是 link2pc_gui.py 而不是 link2pc_cli.py：
+# 它的 main() 会先看参数，带 send/serve/devices 就转给命令行，
+# 什么都不带才开窗口。所以一个 lansplice 命令两用：
+#   lansplice              开图形界面
+#   lansplice serve        纯命令接收
+exec python3 -B "$PREFIX/link2pc_gui.py" "\$@"
 EOF
 chmod 755 "$BINLINK"
 
@@ -119,6 +156,50 @@ chmod 755 "$PREFIX"
 for f in $FILES; do
     [ -f "$PREFIX/$f" ] && chmod 644 "$PREFIX/$f"
 done
+
+# ---------------------------------------------------------------- 桌面项
+# 有了它，应用菜单里会出现 LanSplice，双击就能开图形界面。
+# 图标用 app.ico 转的 png —— 没装转换工具就退回一个通用图标名，
+# 少个图标不影响能不能用。
+mkdir -p "$ICON_DIR/256x256/apps" 2>/dev/null || true
+ICON_LINE="Icon=applications-internet"
+if [ -f "$SRC_DIR/app.ico" ] && command -v convert >/dev/null 2>&1; then
+    if convert "$SRC_DIR/app.ico[0]" "$ICON_DIR/256x256/apps/lansplice.png" 2>/dev/null; then
+        ICON_LINE="Icon=lansplice"
+    fi
+elif [ -f "$SRC_DIR/app.ico" ] && command -v python3 >/dev/null 2>&1; then
+    # 没有 ImageMagick 就用 Python 试一次（PIL 不一定有，失败就算了）
+    if python3 -c "
+import sys
+try:
+    from PIL import Image
+    Image.open(sys.argv[1]).convert('RGBA').save(sys.argv[2])
+except Exception:
+    sys.exit(1)
+" "$SRC_DIR/app.ico" "$ICON_DIR/256x256/apps/lansplice.png" 2>/dev/null; then
+        ICON_LINE="Icon=lansplice"
+    fi
+fi
+
+mkdir -p "$(dirname "$DESKTOP_FILE")" 2>/dev/null || true
+cat > "$DESKTOP_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=LanSplice
+Name[zh_CN]=LanSplice 双机直传
+GenericName=LAN file transfer
+GenericName[zh_CN]=局域网文件直传
+Comment=Push files straight onto the other PC's disk, no cloud, no sharing
+Comment[zh_CN]=把文件直接推到对方硬盘上，不走网盘、不开共享
+Exec=$BINLINK
+$ICON_LINE
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=transfer;lan;share;
+StartupNotify=true
+EOF
+chmod 644 "$DESKTOP_FILE"
+say "桌面项：$DESKTOP_FILE"
 
 # ---------------------------------------------------------------- 放行
 say ""
@@ -141,9 +222,10 @@ fi
 
 say ""
 say "装好了。试一下："
+say "  lansplice                             # 开图形界面（应用菜单里也有）"
 say "  lansplice version"
-say "  lansplice serve                       # 当接收端，默认收进 ~/Downloads/LanSplice"
-say "  lansplice send 文件 --to 192.168.1.20 # 发给对端（配对码在 serve 启动时会打出来）"
+say "  lansplice serve                       # 纯命令行当接收端，收进 ~/Downloads/LanSplice"
+say "  lansplice send 文件 --to 192.168.1.20 # 发给对端（配对码在界面或 serve 里能看到）"
 say ""
-say "提示：两台机器的配对码必须一致。第一次用，在其中一台上跑 serve，"
-say "它会把配对码打出来并存进 ~/.config/LanSplice/config.json。"
+say "提示：两台机器的配对码必须一致。第一次用，在其中一台上打开界面或跑 serve，"
+say "它会把配对码显示出来并存进 ~/.config/LanSplice/config.json。"
