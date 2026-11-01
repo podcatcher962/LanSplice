@@ -4,15 +4,15 @@ LanSplice 平台差异层
 ==================
 把所有「一个系统一个做法」的东西收在这里：
 
-    开机自启     Windows 注册表 / Linux .desktop / macOS 暂无
+    开机自启     Windows 注册表 / Linux .desktop / macOS LaunchAgent
     打开目录      os.startfile / xdg-open / open
     定位文件      explorer /select / nautilus --select / open -R
     打开链接      同上，交给 webbrowser
-    单实例        Windows 命名互斥量 / POSIX flock
-    窗口前置      EnumWindows / wmctrl（没装就算了）
-    剪贴板文件    Windows CF_HDROP / 其余返回空
-    防火墙        Windows netsh-规则 / Linux 只给命令，不自动改
-    界面字体      雅黑 / Noto Sans CJK 系列
+    单实例        Windows 命名互斥量 / POSIX flock（Linux 与 macOS 共用）
+    窗口前置      EnumWindows / wmctrl / AppleScript frontmost
+    剪贴板文件    Windows CF_HDROP / macOS osascript / Linux 暂无
+    防火墙        Windows netsh-规则 / 其余只给命令，不自动改
+    界面字体      雅黑 / Noto Sans CJK 系列 / 苹方
 
 原则：**任何一条失败都不许抛异常**。拿不到就返回 False / 空列表 / None，
 让上层的默认分支接住 —— 一个查不到字体就崩掉的界面，比字体难看糟糕得多。
@@ -180,9 +180,34 @@ def _linux_autostart_file():
     return os.path.join(base, "autostart", "lansplice.desktop")
 
 
+MAC_LAUNCH_LABEL = "com.lansplice.app"
+
+
+def _mac_launch_file():
+    return os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents",
+                        MAC_LAUNCH_LABEL + ".plist")
+
+
+_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>%s</string>
+    <key>ProgramArguments</key>
+    <array>
+%s
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+"""
+
+
 def autostart_cmd():
     """
-    开机要执行的那条命令。
+    开机要执行的那条命令（Windows / Linux 形态；macOS 用 plist 数组，见下）。
 
     打包成 exe：exe 自己的路径，带 --min（开机时不弹窗，直接缩托盘）。
     从源码跑：python3 -B 脚本路径（-B 是不写 __pycache__，
@@ -199,6 +224,15 @@ def autostart_cmd():
     return "%s -B %s%s" % (sys.executable or "python3", script, flag)
 
 
+def _mac_launch_args():
+    """LaunchAgent 的 ProgramArguments：不进 shell，所以是数组，不需要引号。"""
+    if getattr(sys, "frozen", False):
+        return [os.path.abspath(sys.executable)]
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "link2pc_gui.py")
+    return [sys.executable or "python3", "-B", script]
+
+
 def autostart_get():
     """当前是否已设为开机自启。"""
     if IS_WIN:
@@ -211,6 +245,8 @@ def autostart_get():
             return False
     if IS_LINUX:
         return os.path.exists(_linux_autostart_file())
+    if IS_MAC:
+        return os.path.exists(_mac_launch_file())
     return False
 
 
@@ -257,6 +293,24 @@ def autostart_set(on):
             ) % cmd
             with open(p, "w", encoding="utf-8", newline="\n") as f:
                 f.write(body)
+            return True
+        except Exception:
+            return False
+    if IS_MAC:
+        p = _mac_launch_file()
+        try:
+            if not on:
+                if os.path.exists(p):
+                    os.remove(p)
+                _run(["launchctl", "remove", MAC_LAUNCH_LABEL], timeout=6)
+                return True
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            body = _PLIST % (MAC_LAUNCH_LABEL, "\n".join(
+                "        <string>%s</string>" % a for a in _mac_launch_args()))
+            with open(p, "w", encoding="utf-8", newline="\n") as f:
+                f.write(body)
+            # 已在跑的 launchd 不受影响；这里只是尽力让配置立刻可查
+            _run(["launchctl", "load", p], timeout=6)
             return True
         except Exception:
             return False
@@ -338,6 +392,19 @@ def focus_existing():
     """
     if IS_WIN:
         return _focus_win()
+    if IS_MAC:
+        # System Events 的 frontmost 不需要辅助功能授权之外的东西；
+        # 拿不到就算了，上层有兜底提示。
+        try:
+            r = subprocess.run(
+                ["osascript", "-e",
+                 'tell application "System Events" to set frontmost of '
+                 '(first application process whose background only is false '
+                 'and name is "LanSplice") to true'],
+                capture_output=True, timeout=6)
+            return r.returncode == 0
+        except Exception:
+            return False
     for cmd in (["wmctrl", "-a", "LanSplice"], ["wmctrl", "-x", "-a", "lansplice"]):
         if _which(cmd[0]) and _run(cmd, timeout=4) == 0:
             return True
@@ -395,15 +462,46 @@ def _focus_win():
 
 CF_HDROP = 15
 
+# macOS：让 Finder 里「复制」的文件变成路径列表。
+# «class furl» 是剪贴板里的文件 URL 原始类；单选时苹果脚本
+# 对「as list」强转有怪癖，所以 list 失败退回单元素。
+_MAC_CLIP_APPLESCRIPT = (
+    'try\n'
+    '    set fs to (the clipboard as «class furl» list)\n'
+    'on error\n'
+    '    set fs to {(the clipboard as «class furl»)}\n'
+    'end try\n'
+    'set out to ""\n'
+    'repeat with f in fs\n'
+    '    set out to out & (POSIX path of f) & linefeed\n'
+    'end repeat\n'
+    'return out'
+)
+
 
 def clipboard_file_paths():
     """
     取剪贴板里被复制的**文件/文件夹**路径。
 
-    目前只在 Windows 上实现（CF_HDROP）。Linux 上要分 GNOME 的
-    x-special/gnome-copied-files、KDE 的 application/x-kde-cutselection，
-    流派太多，暂时返回空 —— 上层会当作「复制的是普通文字」，不影响其他功能。
+    Windows 用 CF_HDROP；macOS 用 osascript 读文件 URL；
+    Linux 上要分 GNOME / KDE 的好几种私有格式，流派太多，暂时返回空 ——
+    上层会当作「复制的是普通文字」，不影响其他功能。
     """
+    if IS_MAC:
+        try:
+            r = subprocess.run(["osascript", "-e", _MAC_CLIP_APPLESCRIPT],
+                               capture_output=True, timeout=6)
+            if r.returncode != 0:
+                return []
+            from urllib.parse import unquote
+            out = []
+            for line in r.stdout.decode("utf-8", "replace").splitlines():
+                line = line.strip()
+                if line:
+                    out.append(unquote(line))
+            return out[:4096]
+        except Exception:
+            return []
     if not IS_WIN:
         return []
     try:
@@ -496,7 +594,20 @@ def firewall_manual_command():
     Linux 上不自动改防火墙：改防火墙要 root，而弹 pkexec 让用户在
     「授权窗口」里输密码这件事，在各家信创系统上表现并不一致，
     失败了还会留个空转的对话框。给一条能直接粘到终端的命令更可靠。
+
+    macOS 的应用防火墙默认是关的；开着时按 App 放行比按端口靠谱
+    （socketfilterfw 不需要进系统设置的图形界面，但需要 sudo）。
     """
+    if IS_MAC:
+        if getattr(sys, "frozen", False):
+            app = os.path.abspath(sys.executable)
+            if ".app/Contents/MacOS/" in app:
+                app = app.split(".app/Contents/MacOS/")[0] + ".app"
+        else:
+            app = os.path.dirname(os.path.abspath(__file__))
+        return ("/usr/libexec/ApplicationFirewall/socketfilterfw --add '%s' && "
+                "/usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp '%s'"
+                % (app, app))
     if _which("ufw"):
         return "sudo ufw allow %d/tcp && sudo ufw allow %d/udp" % (
             TCP_PORT, UDP_PORT)
@@ -521,6 +632,8 @@ def firewall_hint():
 
 def firewall_tool():
     """当前系统用的是哪套防火墙（只用于界面上显示一行说明）。"""
+    if IS_MAC:
+        return "应用防火墙"
     for name, label in (("ufw", "UFW"), ("firewall-cmd", "firewalld"),
                         ("iptables", "iptables")):
         if _which(name):
@@ -551,8 +664,9 @@ def tray_supported():
     托盘目前只有 Windows 实现（Shell_NotifyIcon）。
 
     Linux 上托盘要过 libappindicator / StatusNotifierItem，各家桌面
-    支持情况不一，麒麟和 UOS 又各有自己的实现 —— 先不做，
-    界面上把这个开关藏起来，关窗口就是退出。
+    支持情况不一，麒麟和 UOS 又各有自己的实现 —— 先不做。
+    macOS 的菜单栏常驻要 pyobjc / rumps，未签名分发下多一层依赖风险，
+    也先不做。这两处都是：关窗口就是退出，界面上把开关藏起来。
     """
     return IS_WIN
 
