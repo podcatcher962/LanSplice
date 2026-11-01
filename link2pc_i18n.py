@@ -938,8 +938,12 @@ S = {
         'This app transfers files between two machines you own on the same local network.\n\n· Do not use it to transfer illegal content.\n· Keep the pairing code safe — anyone with the code can write into your receive folder.\n· Judge executable files from the peer yourself; this app does not scan for viruses.\n· The author is not liable for any data loss or legal consequence caused by using this app.',
     ),
     "g226": (
-        '%s  v%s\n\n双机局域网直传 · 加密通道 · 免共享\n\n%s\n基于 Python + tkinter + cryptography',
-        '%s  v%s\n\nDirect PC-to-PC transfer on your LAN · encrypted · no file sharing\n\n%s\nBuilt with Python + tkinter + cryptography',
+        '%s  v%s\n\n双机局域网直传 · 加密通道 · 免共享\n\n%s\n基于 Python + tkinter + cryptography'
+        '\n\nMIT 许可：自由使用、修改、分发，保留版权声明与署名即可'
+        '\ngithub.com/podcatcher962/LanSplice',
+        '%s  v%s\n\nDirect PC-to-PC transfer on your LAN · encrypted · no file sharing\n\n%s\nBuilt with Python + tkinter + cryptography'
+        '\n\nMIT licence: free to use, modify and redistribute — keep the notice and credit'
+        '\ngithub.com/podcatcher962/LanSplice',
     ),
     "g227": (
         '已连接 %s，通道已加密',
@@ -1655,6 +1659,149 @@ S = {
     "g406": (
         '关闭',
         'Close',
+    ),
+    # ---- v1.6.1 历史「传了什么」
+    "g407": (
+        '%s 等 %d 个文件',
+        '%s and %d more',
+    ),
+    "g408": (
+        '详情',
+        'Details',
+    ),
+    "g409": (
+        '传输详情',
+        'Transfer details',
+    ),
+    "g410": (
+        '内容',
+        'Name',
+    ),
+    "g411": (
+        '文件清单（%d 个）',
+        'Files (%d)',
+    ),
+    "g412": (
+        '失败 %d 个',
+        '%d failed',
+    ),
+    "g413": (
+        '双击一行看详情',
+        'Double-click a row for details',
+    ),
+    "g414": (
+        '来源',
+        'Source',
+    ),
+    "g415": (
+        '接收目录',
+        'Saved to',
+    ),
+    "g416": (
+        '还有 %d 个没列出（只记前 %d 个）',
+        '%d more not listed (first %d kept)',
+    ),
+    # ---- v1.6.1 镜像收藏 / 右键发送
+    "g417": (
+        '常用任务',
+        'Saved jobs',
+    ),
+    "g418": (
+        '源文件夹不在了，需要重新选一个',
+        'Source folder is gone — pick another one',
+    ),
+    "g419": (
+        '收藏',
+        'Save',
+    ),
+    "g420": (
+        '删除',
+        'Remove',
+    ),
+    "g421": (
+        '已收藏：%s',
+        'Saved: %s',
+    ),
+    "g422": (
+        '用 LanSplice 发送',
+        'Send with LanSplice',
+    ),
+    "g423": (
+        '资源管理器右键发送',
+        'Explorer right-click send',
+    ),
+    "g424": (
+        '已加入右键菜单，重新打开资源管理器可见',
+        'Added to the right-click menu — reopen Explorer to see it',
+    ),
+    "g425": (
+        '已从右键菜单移除',
+        'Removed from the right-click menu',
+    ),
+    "g426": (
+        '写入注册表失败，可能被安全软件拦了',
+        'Could not write the registry — likely blocked by security software',
+    ),
+    "g427": (
+        '右键传来的 %d 项已加入队列',
+        '%d item(s) from Explorer added to the queue',
+    ),
+    "g428": (
+        '许可与署名…',
+        'License & credit…',
+    ),
+    "g429": (
+        'LanSplice  ·  MIT 许可\n'
+        '\n'
+        '你可以：\n'
+        '· 随便用 —— 家里、公司、几台机器都行，不收费\n'
+        '· 随便改 —— 改成自己需要的样子，不要求你公开改动\n'
+        '· 随便传 —— 原样或改过的都可以给别人\n'
+        '· 并进自己的项目 —— 商用也行，MIT 不限制用途\n'
+        '\n'
+        '唯一的要求（两条，都很轻）：\n'
+        '1. 保留版权声明 —— 分发时带上 LICENSE 里的版权行和许可声明\n'
+        '2. 保留署名 —— 改过的版本，请在「关于」或说明里注明来源，例如：\n'
+        '     基于 LanSplice 修改 · 原作者 永远的兰兰\n'
+        '     github.com/podcatcher962/LanSplice\n'
+        '\n'
+        '另外：你改坏了、加的功能出问题，请不要说成是原作者的问题。\n'
+        '\n'
+        '第三方组件（Python、tkinter、cryptography、PyInstaller）\n'
+        '各自遵循自己的许可，与本项目的 MIT 许可互不影响。\n'
+        '\n'
+        '完整许可文本见程序目录下的 LICENSE，或上面那个仓库地址。',
+        'LanSplice  ·  MIT License\n'
+        '\n'
+        'You may:\n'
+        '· Use it freely — home, office, as many machines as you like, no charge\n'
+        '· Modify it — no obligation to publish your changes\n'
+        '· Redistribute it — original or modified\n'
+        '· Include it in your own project — commercial use is fine\n'
+        '\n'
+        'The only requirements (two, both light):\n'
+        '1. Keep the copyright notice — ship the copyright line and permission\n'
+        '   notice from LICENSE\n'
+        '2. Keep the credit — a modified build should say where it came from,\n'
+        '   in About or the docs, e.g.:\n'
+        '     Based on LanSplice by Lanlan Eternal\n'
+        '     github.com/podcatcher962/LanSplice\n'
+        '\n'
+        'Also: if your build breaks, please do not present it as the original\n'
+        "author's problem.\n"
+        '\n'
+        'Third-party components (Python, tkinter, cryptography, PyInstaller) keep\n'
+        "their own licences, independent of this project's MIT terms.\n"
+        '\n'
+        'Full licence text: the LICENSE file next to the program, or the repo above.',
+    ),
+    "g430": (
+        '许可与署名',
+        'License & credit',
+    ),
+    "g431": (
+        '重发',
+        'Resend',
     ),
     # ---- v1.5 命令行
     "cli01": (
