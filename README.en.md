@@ -241,7 +241,7 @@ UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium /
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
-Download and extract the complete `LanSplice-v1.7.2-linux-kit.tar.gz`, then:
+Download **[LanSplice-v1.7.3-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-v1.7.3-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
 
 ```sh
 sudo sh install.sh
@@ -305,7 +305,10 @@ The app asks for elevation once, then does four things:
    - `LanSplice-TCP`: TCP 47820, **inbound only**
    - `LanSplice-UDP`: UDP 47821, **inbound only**
 3. Each rule carries three restrictions:
-   - **Program**: only `LanSplice.exe` — no other software on the machine can borrow these ports
+   - **Source address**: only the three private ranges plus `127.0.0.1`. No `Any`.
+
+Rules are **port-scoped, not program-scoped** since v1.7.3: one rule covers every
+future version, so upgrading no longer asks you to allow it again.
    - **Remote address**: only `192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12` plus `127.0.0.1`
    - **Direction**: inbound only; outbound rules untouched
 4. Re-binds the listening socket so the new rules apply immediately (no restart needed)
@@ -317,7 +320,7 @@ Layer by layer, each one alone would be enough:
 | Layer | What it stops |
 |---|---|
 | Windows Firewall | Packets whose source is not a private range are **dropped outright** — the app never even sees them. Every public IP is eliminated here |
-| Rule scope | Only the `LanSplice.exe` file; the ports are not opened to other local programs |
+| Rule scope | Only TCP 47820 / UDP 47821, only from LAN sources; no other port touched |
 | Port count | Exactly two, both inbound. No web server, no RDP, no file sharing |
 | App behaviour | It **never dials out**, does no UPnP, no port mapping, no NAT traversal — it cannot open a door for itself |
 | Router | Home routers NAT by default: the internet cannot reach any LAN host unless *you* add a port forward |
@@ -357,7 +360,7 @@ No Windows file sharing involved — **port 445 is never touched**.
 | Authentication | Pairing-code-derived key + X25519 key exchange + mutual HMAC |
 | Channel | AES-256-GCM, independent keys per direction, sequence number as nonce (anti-replay) |
 | Source filter | Private IPv4 ranges only; public IPv4 / IPv6 rejected |
-| Firewall | Two inbound rules, program-scoped and source-scoped |
+| Firewall | Two inbound rules, two ports only, source-scoped to LAN |
 | Write scope | Confined to the receive folder; `..`, drive letters, `CON`/`NUL` reserved names blocked |
 | Remote open | Only the receive folder and its children; `..`, drive letters, anything above it rejected; refuses to open anything if the receive folder is gone |
 | Partial files | Written as `.l2ptmp`, renamed only after byte-count verification |
@@ -486,6 +489,7 @@ independent of this project's MIT terms.
 
 ## Changelog
 
+**v1.7.3** — closing now asks first: minimise to tray or quit; fixes duplicate taskbar icons
 **v1.7.2** — UOS 20 installs without pip or a working package repository; native macOS support
 - **Fixes a real Xinchuang startup failure**: UOS 20 Professional may have neither
   `cryptography` nor `pip3`, while apt reports that the package cannot be found. The complete
