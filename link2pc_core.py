@@ -38,6 +38,11 @@ import secrets
 import subprocess
 import threading
 from link2pc_i18n import t as _t
+from link2pc_deps import ensure_crypto as _ensure_crypto
+
+# 必须在导入 hazmat 之前执行：Linux 离线依赖装在程序旁的 vendor/。
+# 缺库时给出可操作的中文提示，而不是一句 ModuleNotFoundError。
+_ensure_crypto()
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey,
@@ -55,7 +60,7 @@ MAGIC = b"L2P1"
 # 版本号只在这里写一次。
 # 以前图形界面和命令行各写一份，升级时忘了改其中一处，
 # 就会出现「窗口标题 1.5.0、命令行 version 1.4.0」这种自相矛盾。
-APP_VER = "1.7.1"
+APP_VER = "1.7.2"
 
 DISCOVERY_PORT = 47821
 ANNOUNCE_EVERY = 8             # 秒。接收端隔这么久主动宣告一次自己
