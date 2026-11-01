@@ -32,6 +32,16 @@ import link2pc_i18n as I18N
 import link2pc_platform as P          # v1.7.1：系统差异全收在那一层
 from link2pc_i18n import t as _t
 
+# 内网聊天（v1.7.3）：没有服务器，每台都是节点
+try:
+    import link2pc_chat as CHAT
+    import link2pc_chatwin as CHATWIN
+    HAS_CHAT = True
+except Exception:
+    CHAT = None
+    CHATWIN = None
+    HAS_CHAT = False
+
 try:
     import link2pc_tray as TRAY
     HAS_TRAY = True
@@ -489,6 +499,15 @@ class App:
         self._found = []                # 设备列表第 N 行对应的数据
         self._seen = set()              # 已出现过的 (ip, port)，防重复插入
 
+        # ---- 内网聊天（v1.7.3）
+        # 不选主机：每台都是节点，靠广播互相知道，发消息直接连过去。
+        self.chat_roster = CHAT.Roster() if HAS_CHAT else None
+        self.chat_store = (CHAT.ChatStore(self._chat_path())
+                           if HAS_CHAT else None)
+        self.chat_name = CHAT.clean_name(
+            self.cfg.get("chat_name") or CHAT.default_name()) if HAS_CHAT else ""
+        self.chat_win = (CHATWIN.ChatWindow(self) if HAS_CHAT else None)
+
         self.peer_root = ""             # 对端接收目录（发送时握手取回）
         self.rel_rows = {}              # 发送用的相对路径 -> 清单行
         self.item_total = {}            # 清单行 -> 该行总字节
@@ -573,6 +592,8 @@ class App:
         fm.add_command(label=_t("g011"), command=self.pull_dialog)
         fm.add_command(label=_t("g320"), command=self.send_text_dialog,
                        accelerator="Ctrl+Shift+V")
+        fm.add_command(label=_t("g460") + "…", command=self.open_chat,
+                       accelerator="Ctrl+M")
         fm.add_command(label=_t("g328"), command=self.send_clipboard)
         fm.add_separator()
         fm.add_command(label=_t("g360"), command=self.show_qr_share)
@@ -651,9 +672,13 @@ class App:
         else:
             self.var_shell = tk.BooleanVar(value=False)
         stm.add_separator()
+        if self.tray and P.tray_supported():
+            stm.add_command(label=_t("g457") + "…",
+                            command=self.ask_close_action_again)
         stm.add_command(label=_t("g355"), command=self.open_cfg_folder)
         m.add_cascade(label=_t("g354"), menu=stm)
 
+        r.bind("<Control-m>", lambda e: self.open_chat())
         r.bind("<Control-o>", lambda e: self.pick_files())
         r.bind("<Control-O>", lambda e: self.pick_folder())
         r.bind("<Control-v>", self.on_paste)
@@ -1038,9 +1063,10 @@ class App:
 
     # ------------------------------------------------------------ 设备发现
 
-    def scan_peers(self):
-        self.btn_scan.config(text=_t("g078"), state="disabled")
-        self.peer_list.delete(0, "end")
+    def scan_peers(self, silent=False):
+        if not silent:
+            self.btn_scan.config(text=_t("g078"), state="disabled")
+            self.peer_list.delete(0, "end")
 
         def work():
             try:
@@ -1091,6 +1117,19 @@ class App:
         name = d.get("name") or "?"
         if L.is_own_addr(ip):
             return
+
+        # 同一条广播顺手推进聊天成员表 —— 聊天不需要另开一套心跳，
+        # 广播本来每 8 秒就有一轮。
+        if HAS_CHAT and self.chat_roster is not None:
+            try:
+                is_new = self.chat_roster.update(
+                    {"name": name, "port": port, "ip": ip,
+                     "inst": d.get("inst")}, ip=ip)
+                if self.chat_win is not None and self.chat_win.win is not None:
+                    if is_new or True:
+                        self.chat_win.refresh_roster()
+            except Exception:
+                pass
 
         # 同一台机器的多个地址只保留一条（否则列表里会出现两台同名设备）
         low = name.lower()
@@ -1306,6 +1345,104 @@ class App:
         return "break"
 
     # ------------------------------------------------------------ 文字互传
+
+    # ------------------------------------------------------------ 内网聊天
+
+    def open_chat(self):
+        """打开聊天窗口。没有局域网其他人也能开，只是发不出去。"""
+        if not HAS_CHAT:
+            messagebox.showinfo(APP_NAME, _t("g460"), parent=self.root)
+            return
+        self.chat_win.open()
+        # 打开时顺手扫一遍，别让人干等广播
+        try:
+            self.scan_peers(silent=True)
+        except Exception:
+            pass
+
+    def set_chat_name(self, name):
+        self.chat_name = CHAT.clean_name(name)
+        self.cfg["chat_name"] = self.chat_name
+        save_cfg(self.cfg)
+
+    @staticmethod
+    def _my_ips_cached():
+        return set(d["ip"] for d in L.list_ipv4())
+
+    def chat_peers(self):
+        """当前能发的人（去掉自己这台）。"""
+        if not HAS_CHAT or self.chat_roster is None:
+            return []
+        out = []
+        mine = self._my_ips_cached()
+        my_ports = set()
+        try:
+            if self.server:
+                my_ports.add(int(self.server.port))
+        except Exception:
+            pass
+        for p in self.chat_roster.online():
+            # 自己发出去的广播也会回来，按「端口相同 + IP 是本机」排掉
+            if p["port"] in my_ports and p["ip"] in mine:
+                continue
+            out.append(p)
+        return out
+
+    def chat_send(self, body, on_done=None):
+        """
+        把一句话发给所有在线的人。
+
+        关键：**没有中转**。每台自己连过去发，谁关机都不影响别人。
+        单台失败不算整体失败 —— 内网里有人睡眠、关机是常态。
+        """
+        peers = self.chat_peers()
+        msg = CHAT.make_msg(body, self.chat_name)
+        if not peers:
+            if on_done:
+                on_done(0, [_t("g476")], msg)
+            return
+
+        def work():
+            res = CHAT.broadcast(self.key, peers, msg)
+            ok_n = sum(1 for _p, ok, _e in res if ok)
+            fails = ["%s：%s" % (p.get("name") or p["ip"], e)
+                     for p, ok, e in res if not ok and e]
+            if ok_n:
+                try:
+                    self.chat_store.append(msg)
+                except Exception:
+                    pass
+            try:
+                self.events.put(("chat_sent", (ok_n, fails, msg, on_done)))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True,
+                         name="LanSplice-ChatSend").start()
+
+    def on_chat_incoming(self, msg):
+        """服务端收到一条聊天消息（在事件泵里被调用）。"""
+        clean = CHAT.handle_incoming(msg, roster=self.chat_roster,
+                                     store=self.chat_store)
+        if not clean:
+            return
+        try:
+            self.lbl_status.config(text=_t("g466") % clean["from"])
+        except Exception:
+            pass
+        if self.chat_win is not None:
+            self.chat_win.on_incoming(clean)
+        # 窗口没开也要让人知道有新消息
+        if self.chat_win is None or self.chat_win.win is None:
+            self._notify(_t("g460"), _t("g466") % clean["from"] + "：" +
+                         clean["body"][:60])
+
+    def _chat_path(self):
+        """聊天记录放配置目录，跟 history.jsonl 做邻居。"""
+        try:
+            return os.path.join(os.path.dirname(cfg_path()), "chat.jsonl")
+        except Exception:
+            return "chat.jsonl"
 
     def _save_toggles(self):
         self.cfg["deep_verify"] = bool(self.var_verify.get())
@@ -3136,20 +3273,27 @@ class App:
             ps_list.append(
                 "Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -ne 'Private' } "
                 "| Set-NetConnectionProfile -NetworkCategory Private;")
-        # 规则同时覆盖公用/专用；真正的门是 RemoteAddress 限内网 + AES + 配对码。
-        # 再加 -Program 只放行本程序：端口不对本机其他程序开放（这是"绝不开到公网"
-        # 之外的第二层收敛，别人写的程序也别想借这两个端口进来）。
-        try:
-            exe_path = os.path.abspath(sys.executable).replace("'", "''")
-        except Exception:
-            exe_path = ""
-        prog = ("-Program '%s' " % exe_path) if exe_path else ""
+        # 规则**按端口**建，不绑 -Program。
+        #
+        # 为什么改：Windows 的防火墙规则是按 exe 完整路径记的。
+        # 每发一版，文件名就从 v1.7.2.exe 变成 v1.7.3.exe，路径一变旧规则就
+        # 管不到新文件 —— 于是每次升级都要重新放行一次。用户看到的是
+        # 「怎么又问我」，而且点错一次（或系统记住了「阻止」）就再也收不到文件。
+        #
+        # 按端口就不一样了：一条规则管所有版本，换多少次都不用再问。
+        #
+        # 安全性没有退步：
+        #   · RemoteAddress 仍然只放行局域网段，公网连不进来
+        #   · 端口是本软件专用，冲突概率极低
+        #   · 数据本身还有 AES-256-GCM + 配对码两道关
+        # 代价是：本机别的程序若也监听这两个端口，同样能被内网访问。
+        # 这个取舍写在 README 的「防火墙这件事」里，不藏着。
         for proto, pnum in (("TCP", port), ("UDP", L.DISCOVERY_PORT)):
             ps_list.append(
                 "New-NetFirewallRule -DisplayName 'LanSplice-%s' -Direction Inbound "
-                "%s-Protocol %s -LocalPort %d -Action Allow -Profile Any "
+                "-Protocol %s -LocalPort %d -Action Allow -Profile Any "
                 "-RemoteAddress 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,127.0.0.1 "
-                "| Out-Null;" % (proto, prog, proto, pnum))
+                "| Out-Null;" % (proto, proto, pnum))
         ps_list.append("Write-Output 'L2P-FW-OK'")
         return "".join(ps_list)
 
@@ -3529,6 +3673,13 @@ class App:
             name, n = data
             self.lbl_status.config(text=_t("g322") % name)
             self._notify(_t("g320"), _t("g345") % n)
+        elif kind == "chat_sent":
+            ok_n, fails, msg, cb = data
+            if cb:
+                try:
+                    cb(ok_n, fails, msg)
+                except Exception:
+                    pass
         elif kind == "text_fail":
             self.lbl_status.config(text=_t("g323") % str(data)[:60])
         elif kind == "mirror_scan":
@@ -3591,6 +3742,8 @@ class App:
                 self.on_peer_seen(d)
             elif k == "recv_text":
                 self.on_recv_text(d)
+            elif k == "chat_msg":
+                self.on_chat_incoming(d.get("msg") or {})
             elif k == "recv_begin":
                 off = int(d.get("offset") or 0)
                 name = os.path.basename(d.get("path", ""))
@@ -3789,6 +3942,9 @@ class App:
     def show_window(self):
         try:
             self.root.deiconify()
+            # 回到任务栏。顺序要紧：先 deiconify 让它可见，
+            # 再清掉 TOOLWINDOW，任务栏才会挂回一个（且只有一个）按钮。
+            P.taskbar_set_visible(self.root, True)
             self.root.lift()
             self.root.focus_force()
         except Exception:
@@ -3801,6 +3957,10 @@ class App:
                 self._close_qr()
         except Exception:
             pass
+        # 先把它从任务栏摘掉，再藏。
+        # 只 withdraw 的话 Windows 任务栏按钮时常留着，等 deiconify 又挂一个，
+        # 用户看到的就是「关了一次，任务栏里两个图标」。
+        P.taskbar_set_visible(self.root, False)
         try:
             self.root.withdraw()
         except Exception:
@@ -3828,18 +3988,113 @@ class App:
     # ------------------------------------------------------------ 关闭
 
     def on_close(self):
-        # 默认缩到托盘：接收端一关，对端就找不到你了
-        if self.cfg.get("close_to_tray", True) and self.tray and not self._quitting:
-            self.hide_window()
-            if not self.cfg.get("_tray_hint_shown"):
-                self.cfg["_tray_hint_shown"] = True
-                save_cfg(self.cfg)
-                try:
-                    self.tray.notify(_t("g311"), _t("g312"))
-                except Exception:
-                    pass
+        """
+        点右上角 × 要做两件事之一：缩到托盘继续接收，或者彻底退出。
+
+        以前是「默认缩托盘、第一次提示一下」—— 用户点关闭以为关了，
+        结果程序还在后台，任务栏也还留着图标，容易误会。
+        现在第一次点关闭就明着问，并且可以记住选择。
+        """
+        if self._quitting:
             return
-        self.quit_app()
+
+        # 没有托盘的平台没得选：缩进去就再也叫不出来，只能退出
+        if not (self.tray and P.tray_supported()):
+            self.quit_app()
+            return
+
+        act = self.cfg.get("close_action")
+        if act == "tray":
+            self._close_to_tray()
+            return
+        if act == "quit":
+            self.quit_app()
+            return
+
+        # 还没选过：问一次
+        self._ask_close_action()
+
+    def _close_to_tray(self):
+        self.hide_window()
+        try:
+            self.lbl_status.config(text=_t("g455"))
+        except Exception:
+            pass
+        if not self.cfg.get("_tray_hint_shown"):
+            self.cfg["_tray_hint_shown"] = True
+            save_cfg(self.cfg)
+            try:
+                self.tray.notify(_t("g311"), _t("g312"))
+            except Exception:
+                pass
+
+    def _ask_close_action(self):
+        """第一次关窗口时问一句，顺便让人可以勾「以后不再问」。"""
+        win = tk.Toplevel(self.root)
+        win.title(_t("g450"))
+        win.configure(bg=C_BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+
+        # 按钮栏先占底 —— 这个项目在这上面栽过一次，见 send_text_dialog
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(side="bottom", fill="x", padx=18, pady=(6, 14))
+
+        tk.Label(win, text=_t("g451"), bg=C_BG, fg=C_TEXT, font=(FONT, 9),
+                 justify="left", anchor="w", wraplength=430).pack(
+                     fill="x", padx=18, pady=(16, 8))
+
+        var_remember = tk.BooleanVar(value=True)
+        chk = tk.Checkbutton(
+            win, text=_t("g454"), variable=var_remember, bg=C_BG, fg=C_SUB,
+            font=(FONT, 9), activebackground=C_BG, activeforeground=C_TEXT,
+            selectcolor=C_CARD, anchor="w", bd=0, highlightthickness=0)
+        chk.pack(fill="x", padx=16, pady=(0, 4))
+
+        tk.Label(win, text=_t("g456"), bg=C_BG, fg=C_SUB, font=(FONT, 8),
+                 anchor="w").pack(fill="x", padx=18, pady=(0, 4))
+
+        def pick(action):
+            if var_remember.get():
+                self.cfg["close_action"] = action
+                save_cfg(self.cfg)
+            try:
+                win.destroy()
+            except Exception:
+                pass
+            if action == "tray":
+                self._close_to_tray()
+            else:
+                self.quit_app()
+
+        self._mk_btn(bar, _t("g327"), win.destroy, C_GRAY,
+                     width=None).pack(side="right", padx=(8, 0))
+        self._mk_btn(bar, _t("g453"), lambda: pick("quit"), "#b0413e",
+                     width=None).pack(side="right", padx=(8, 0))
+        self._mk_btn(bar, _t("g452"), lambda: pick("tray"), C_BLUE,
+                     width=None).pack(side="right")
+
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        win.bind("<Escape>", lambda _e: win.destroy())
+
+        # 居中到主窗口上方
+        win.update_idletasks()
+        try:
+            rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+            rw, rh = self.root.winfo_width(), self.root.winfo_height()
+            ww, wh = win.winfo_reqwidth(), win.winfo_reqheight()
+            win.geometry("+%d+%d" % (max(0, rx + (rw - ww) // 2),
+                                     max(0, ry + (rh - wh) // 3)))
+        except Exception:
+            pass
+        win.grab_set()
+        win.focus_force()
+
+    def ask_close_action_again(self):
+        """设置菜单里主动改「关闭时怎么办」——先清掉记忆再问。"""
+        self.cfg.pop("close_action", None)
+        save_cfg(self.cfg)
+        self._ask_close_action()
 
     def quit_app(self):
         if self.sending:
@@ -3913,6 +4168,37 @@ def _run():
     app = App(root)
     # --min：开机自启时直接缩到托盘，不弹窗打断开机。
     # 没有托盘的平台（Linux）不能这么干 —— 缩进去就再没人叫得出来了。
+    # 打包冒烟用：打开聊天窗口停留几秒再退出，验证模块真的打进去了。
+    # 用户不会用到，写在 --help 里也不提。
+    if "--selftest-chat" in sys.argv:
+        app.quiet = True
+        opened = {"ok": False, "err": ""}
+
+        def _try_open():
+            try:
+                app.open_chat()
+            except Exception as e:
+                opened["err"] = "%s: %s" % (type(e).__name__, e)
+                return
+            try:
+                w = app.chat_win.win if app.chat_win else None
+                if w is not None and w.winfo_exists():
+                    opened["ok"] = True
+                    print("CHATWINDOW_TITLE=%s" % w.title())
+                    print("CHATWINDOW_SIZE=%dx%d"
+                          % (w.winfo_width(), w.winfo_height()))
+            except Exception as e:
+                opened["err"] = str(e)
+
+        root.after(900, _try_open)
+        root.after(4500, app.root.destroy)
+        root.mainloop()
+        print("HAS_CHAT=%s" % HAS_CHAT)
+        print("CHAT_WINDOW_OPENED=%s" % opened["ok"])
+        if opened["err"]:
+            print("CHAT_ERROR=%s" % opened["err"])
+        sys.exit(0 if opened["ok"] else 2)
+
     if "--min" in sys.argv and P.tray_supported() and HAS_TRAY:
         # 同时进入「安静模式」：模态框（比如防火墙要重新放行）一律不弹，
         # 否则用户开机时根本看不到那个框，程序却卡着等点击。
