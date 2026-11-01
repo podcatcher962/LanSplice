@@ -30,9 +30,9 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Windows 7 and older | ❌ Not supported |
 | **UOS / Kylin V10 / Deepin / Ubuntu** | ✅ Supported (GUI + CLI), see [docs/linux.md](docs/linux.md) |
 | Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
-| macOS | ❌ No native build; browser mode only ([docs/mac-now.md](docs/mac-now.md)) |
+| macOS (Intel / Apple Silicon) | ⚠️ Native build available, **but not verified on a real Mac yet**: run from source, or build a `.app` with `build_macos.sh`; see [docs/macos.md](docs/macos.md) (no Mac? use browser mode: [docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v1.7.1.exe`.**
+**One file, no decision to make: `LanSplice-v1.7.2.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -236,21 +236,28 @@ Launching with **no arguments at all** opens the normal GUI; nothing about the o
 
 ## Linux / domestic (Xinchuang) systems
 
-The same code runs on Linux. This release is **command line only** — the GUI is next on the list.
+The same code runs on Linux with **both the GUI and command line**.
 UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium / Kunpeng (ARM64),
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
+Download and extract the complete `LanSplice-v1.7.2-linux-kit.tar.gz`, then:
+
 ```sh
 sudo sh install.sh
 
+lansplice                                    # open the GUI
 lansplice serve                              # receive; prints the pairing code
 lansplice send report.xlsx --to 192.168.1.20 # send to a Windows box
 lansplice devices                            # who is listening on this LAN
 ```
 
-- The only third-party dependency is `cryptography`. UOS 20 and Kylin V10 ship
-  `python3-cryptography`, so **air-gapped networks need no pip at all**
+- **UOS 20 x86_64 installs fully offline**: the complete kit carries the crypto
+  dependencies for Python 3.7, with no pip, working apt repository or Internet required.
+  Other distributions continue to prefer the system `cryptography` package
+- Verified on **UOS 20 Professional / Python 3.7.3** with 42 real-Linux checks covering
+  crypto round trips, Chinese filenames, subdirectories, NIC enumeration, single instance,
+  autostart files and GUI startup
 - Installed as a directory, not a single file: Kylin enables SELinux by default, and a
   single-file binary unpacking itself into `/tmp` gets blocked
 - Config lives in `~/.config/LanSplice`; transfer history in `~/.local/share/LanSplice`
@@ -478,6 +485,39 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v1.7.2** — UOS 20 installs without pip or a working package repository; native macOS support
+- **Fixes a real Xinchuang startup failure**: UOS 20 Professional may have neither
+  `cryptography` nor `pip3`, while apt reports that the package cannot be found. The complete
+  Linux kit now carries four offline wheels matched to Python 3.7 / x86_64
+- **New `link2pc_deps.py` bootstrap**: system crypto remains preferred, with automatic fallback
+  to the adjacent `vendor/` directory. There is no unencrypted fallback and no attempt to load
+  x86 binaries on ARM or LoongArch
+- **Installer acceptance check**: `install.sh` runs `lansplice version` after installation, and
+  a missing crypto library now produces an actionable Chinese error instead of a bare import crash
+- Portable verification also works offline as a regular user; third-party licences inside the
+  wheels are retained
+- Adds 43 tests for offline dependencies, platform selection, extraction and fallback
+- **Native macOS support**: the CLI and the GUI run on a Mac out of the box and
+  interoperate byte-for-byte with Windows and Linux. Adds LaunchAgent autostart,
+  paste-after-copy from Finder, an application-firewall command, an unsigned
+  `.app` build script (`build_macos.sh`), a macOS self-check (`mac_check.py`),
+  and docs in `docs/macos.md`
+- **Fixed hidden buttons in the "send text" window**: a `tk.Text` asks for 24 rows by
+  80 columns by default and was packed before the button bar, so it consumed the whole
+  window and squeezed the bar down to 1 px — buttons only appeared after resizing the
+  window by hand. The bar now reserves the bottom first and the text box gets an explicit
+  size (the "received text" window had the same defect)
+- **No more invisible dialogs at login**: with `--min` the window starts in the tray, so the
+  firewall "allow again?" prompt could never be clicked and the app waited forever. Background
+  starts now only show a hint in the status bar
+- **Platform-specific missing-crypto messages**: Windows no longer tells users to "re-run
+  install.sh" (that file does not exist there); it now points at re-downloading the exe or
+  checking the antivirus quarantine
+- **Harder regression suite**: a hung test no longer aborts the whole run (timeout is recorded
+  and the run continues); GUI tests block all modal dialogs; adds 15 dialog-layout checks and
+  7 static checks (i18n keys, version consistency, bare `except`, platform APIs leaking to
+  module scope, swallowed errors on data paths)
 
 **v1.7.1** — a real window on Linux / Xinchuang
 - **The GUI runs on Linux now**: `lansplice` with no arguments opens the window;
