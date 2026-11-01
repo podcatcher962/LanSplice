@@ -1553,6 +1553,109 @@ S = {
         '核对完 %d 个文件：要传 %d 个（%s），另外 %d 个没变',
         'Checked %d files: %d to send (%s), %d unchanged',
     ),
+    # ---- v1.6 单实例 / 防火墙重放行 / 传输历史
+    "g383": (
+        '规则绑的是旧版本，本版可能被拦',
+        'Rule points at an older exe — this build may be blocked',
+    ),
+    "g384": (
+        '换了新版本，防火墙要重新放行',
+        'New version — the firewall rule needs updating',
+    ),
+    "g385": (
+        'Windows 的防火墙规则是按 exe 的完整路径记的。\n\n'
+        '现在是 v%s，路径和上一版不一样，旧规则管不到它 —— '
+        '这正是「昨天还好的，今天连不上」的常见原因。\n\n'
+        '要现在重新放行吗？（只改本机的入站规则，只对局域网地址开放）',
+        'Windows firewall rules are bound to the full path of the exe.\n\n'
+        'You are now on v%s, a different path from the previous build, so the old '
+        'rule no longer covers it — a common cause of "it worked yesterday".\n\n'
+        'Re-allow it now? (inbound only, LAN addresses only)',
+    ),
+    "g386": (
+        '传输历史…',
+        'Transfer history…',
+    ),
+    "g387": (
+        '传输历史',
+        'Transfer history',
+    ),
+    "g388": (
+        '时间',
+        'When',
+    ),
+    "g389": (
+        '方向',
+        'Dir',
+    ),
+    "g390": (
+        '对端',
+        'Peer',
+    ),
+    "g391": (
+        '文件',
+        'Files',
+    ),
+    "g392": (
+        '大小',
+        'Size',
+    ),
+    "g393": (
+        '结果',
+        'Result',
+    ),
+    "g394": (
+        '发送',
+        'Sent',
+    ),
+    "g395": (
+        '接收',
+        'Received',
+    ),
+    "g396": (
+        '成功 %d，失败 %d',
+        '%d ok, %d failed',
+    ),
+    "g397": (
+        '成功 %d',
+        '%d ok',
+    ),
+    "g398": (
+        '还没有记录',
+        'No records yet',
+    ),
+    "g399": (
+        '只有「发送」记录能重发',
+        'Only sent records can be resent',
+    ),
+    "g400": (
+        '原来的文件已经不在了（可能被移动或删除）',
+        'The original files are gone (moved or deleted)',
+    ),
+    "g401": (
+        '已重新加入队列：%d 个',
+        'Back in the queue: %d item(s)',
+    ),
+    "g402": (
+        '清空全部传输历史？这一步不能撤销。',
+        'Clear the whole transfer history? This cannot be undone.',
+    ),
+    "g403": (
+        '重发选中',
+        'Resend',
+    ),
+    "g404": (
+        '打开目录',
+        'Open folder',
+    ),
+    "g405": (
+        '清空历史',
+        'Clear',
+    ),
+    "g406": (
+        '关闭',
+        'Close',
+    ),
     # ---- v1.5 命令行
     "cli01": (
         '没有找到配对码。两种办法：打开一次图形界面让它生成，'
