@@ -1803,6 +1803,63 @@ S = {
         '重发',
         'Resend',
     ),
+    # ---- v1.7.1 Linux 图形界面
+    "g432": (
+        '防火墙（%s）需手动放行',
+        'Firewall (%s): allow manually',
+    ),
+    "g433": (
+        '手动放行',
+        'Allow manually',
+    ),
+    "g434": (
+        '复制命令',
+        'Copy command',
+    ),
+    "g435": (
+        '已复制',
+        'Copied',
+    ),
+    "g436": (
+        '为什么不能一键：\n'
+        '\n'
+        '改防火墙要 root 权限，而各家信创系统用的工具不一样 ——\n'
+        '统信和麒麟桌面版多用 UFW，服务器版常见 firewalld，\n'
+        '还有些机器只剩裸 iptables。弹授权窗口这条路在各家桌面上\n'
+        '表现并不一致，失败了还会留个空转的对话框。\n'
+        '\n'
+        '下面这条已经按本机情况选好了，粘到终端里执行一次即可，\n'
+        '规则是持久的，重启不丢。',
+        'Why this is not a single click:\n'
+        '\n'
+        'Changing firewall rules requires root, and the tool differs\n'
+        'between distributions — UFW on desktop UOS/Kylin, firewalld on\n'
+        'server builds, plain iptables on minimal installs. Prompting for\n'
+        'elevation behaves inconsistently across desktops, and when it\n'
+        'fails you are left with a dialog that did nothing.\n'
+        '\n'
+        'The command below is already picked for this machine. Run it once\n'
+        'in a terminal; the rule persists across reboots.',
+    ),
+    "g437": (
+        '重新检测',
+        'Check again',
+    ),
+    "g438": (
+        '本机没有装 ufw / firewalld / iptables，可能不需要放行。'
+        '如果对端连不上，先看是不是 SELinux 或安全中心拦的。',
+        'No ufw / firewalld / iptables found — probably nothing to allow. '
+        'If the peer still cannot connect, check SELinux or the vendor '
+        'security centre.',
+    ),
+    "g439": (
+        '这台机器没有系统托盘',
+        'No system tray on this system',
+    ),
+    "g440": (
+        '防火墙',
+        'Firewall',
+    ),
     # ---- v1.5 命令行
     "cli01": (
         '没有找到配对码。两种办法：打开一次图形界面让它生成，'
