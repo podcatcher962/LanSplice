@@ -465,6 +465,9 @@ def parse_fw_status(out, expected_exe):
 class App:
     def __init__(self, root):
         self.root = root
+        # quiet=True：后台启动（开机自启 --min），窗口在托盘里，
+        # 不能弹任何模态框 —— 弹了也没人点得到。
+        self.quiet = False
         self.cfg = load_cfg()
         I18N.set_lang(self.cfg.get("lang") or default_lang())
         try:
@@ -1424,18 +1427,28 @@ class App:
         win.geometry("520x380")
         win.transient(self.root)
 
+        # 底部按钮栏必须先占位，正文后放。
+        # tk.Text 默认要 24 行高 × 80 字符宽，又是 expand=True：排在前面的活，
+        # 它会把 520x380 的窗口吃到只剩 1px 给后面的按钮栏 ——
+        # 三个按钮因此跑到窗口外面，非要手动把窗口拉大才露出来。
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(side="bottom", fill="x", padx=14, pady=10)
+
         tk.Label(win, text=_t("g342"), bg=C_BG, fg=C_TEXT,
                  font=(FONT, 9), anchor="w").pack(fill="x", padx=14, pady=(12, 4))
 
         wrap = tk.Frame(win, bg=C_LINE)
         wrap.pack(fill="both", expand=True, padx=14)
+        # 给 Text 一个明确的小尺寸，别用默认的 24 行 × 80 列；
+        # expand=True 照样会让它撑满剩下的空间，只是不再反过来挤压别人。
         txt = tk.Text(wrap, font=(FONT, 10), bg=C_CARD, fg=C_TEXT,
-                      relief="flat", wrap="word", undo=True, padx=8, pady=6)
-        txt.pack(fill="both", expand=True, padx=1, pady=1)
+                      relief="flat", wrap="word", undo=True, padx=8, pady=6,
+                      height=10, width=40)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True, padx=1, pady=1)
         txt.focus_set()
-
-        bar = tk.Frame(win, bg=C_BG)
-        bar.pack(fill="x", padx=14, pady=10)
 
         def fill_clip():
             t = self.clipboard_text()
@@ -1506,19 +1519,25 @@ class App:
         win.geometry("520x360")
         win.transient(self.root)
 
+        # 同发送窗口：按钮栏先占底，Text 给明确尺寸，别让它把按钮挤出去
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(side="bottom", fill="x", padx=14, pady=10)
+
         tk.Label(win, text=_t("g324") % who, bg=C_BG, fg=C_TEXT,
                  font=(FONT, 9, "bold"), anchor="w").pack(fill="x", padx=14,
                                                           pady=(12, 4))
         wrap = tk.Frame(win, bg=C_LINE)
         wrap.pack(fill="both", expand=True, padx=14)
         txt = tk.Text(wrap, font=(FONT, 10), bg=C_CARD, fg=C_TEXT,
-                      relief="flat", wrap="word", padx=8, pady=6)
-        txt.pack(fill="both", expand=True, padx=1, pady=1)
+                      relief="flat", wrap="word", padx=8, pady=6,
+                      height=10, width=40)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True, padx=1, pady=1)
         txt.insert("1.0", body)
         txt.config(state="disabled")
 
-        bar = tk.Frame(win, bg=C_BG)
-        bar.pack(fill="x", padx=14, pady=10)
         lab = tk.Label(bar, text="", bg=C_BG, fg=C_GREEN, font=(FONT, 8))
         lab.pack(side="left")
 
@@ -3149,6 +3168,17 @@ class App:
             return
         self.cfg["fw_prompt_for"] = exe
         save_cfg(self.cfg)
+
+        # 开机自启是带 --min 缩到托盘里的：这时候弹模态框，用户根本看不见，
+        # 程序就卡在那儿等一个永远不来的点击 —— 表面上像「开机后没启动」。
+        # 改成只在状态栏留一句，用户点开窗口能看到，也能点状态灯手动放行。
+        if getattr(self, "quiet", False):
+            try:
+                self.lbl_status.config(text=_t("g384"))
+            except Exception:
+                pass
+            return
+
         if messagebox.askyesno(_t("g384"), _t("g385") % APP_VER, parent=self.root):
             self.fw_dialog(quick=True)
 
@@ -3884,6 +3914,9 @@ def _run():
     # --min：开机自启时直接缩到托盘，不弹窗打断开机。
     # 没有托盘的平台（Linux）不能这么干 —— 缩进去就再没人叫得出来了。
     if "--min" in sys.argv and P.tray_supported() and HAS_TRAY:
+        # 同时进入「安静模式」：模态框（比如防火墙要重新放行）一律不弹，
+        # 否则用户开机时根本看不到那个框，程序却卡着等点击。
+        app.quiet = True
         root.after(700, app.hide_window)
     root.mainloop()
 
