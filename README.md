@@ -298,6 +298,26 @@ LanSplice 干的两件事都是**入站**：
    - **方向**：只有入站，出站规则一条没动
 4. 把已经开着的接收端口重建一次，让新规则立即生效（不用关程序重开）
 
+具体执行的就是几条系统自带命令，没有脚本文件：
+
+```
+netsh advfirewall firewall delete rule name=LanSplice-TCP
+netsh advfirewall firewall delete rule name=LanSplice-UDP
+netsh advfirewall firewall add rule name=LanSplice-TCP dir=in action=allow ^
+      protocol=TCP localport=47820 remoteip=192.168.0.0-192.168.255.255,... profile=any
+netsh advfirewall firewall add rule name=LanSplice-UDP dir=in action=allow ^
+      protocol=UDP localport=47821 remoteip=... profile=any
+```
+
+（`^` 是折行，实际是一整行；来源段省略号处是完整的三段内网 + 127.0.0.1。）
+
+**为什么不用 PowerShell**：v1.7.4 及以前是
+`Start-Process powershell -Verb RunAs -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand <base64>`。
+提权、隐藏窗口、绕过执行策略、base64 编码四个特征叠在一起，跟挖矿木马的启动方式
+一模一样 —— 360 会直接拦，而且不告诉你，用户只看到「点了没反应」。
+`netsh` 是系统签名程序，参数就上面这几条，不写文件、不做编码，安全软件没理由拦。
+
+
 ### 为什么这绝不会把电脑开放到公网
 
 按层说，每一层单独拿出来都足够：
@@ -329,6 +349,13 @@ Get-NetFirewallRule -DisplayName 'LanSplice-*' | Get-NetFirewallApplicationFilte
 可以删掉——现在的版本用不上它。
 
 程序里也有：**「工具 → 安全检查」**，会把规则名、启用状态、作用域列出来。
+
+不想用 PowerShell 的话，用 netsh 直接看也一样：
+
+```
+netsh advfirewall firewall show rule name=LanSplice-TCP verbose
+netsh advfirewall firewall show rule name=LanSplice-UDP verbose
+```
 
 ### 什么时候需要重新放行一次
 
@@ -502,6 +529,32 @@ pyinstaller -F -w --name LanSplice \
 ---
 
 ## 更新记录
+
+**v1.7.6** — 按小众软件编辑的意见逐条改：放行不再用隐藏的 PowerShell
+- **防火墙放行换成 Windows 自带的 `netsh`**：原来的写法是
+  `Start-Process powershell -Verb RunAs -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand <base64>`——
+  提权、隐藏窗口、绕过执行策略、base64 编码，四个特征叠在一起正好是挖矿木马的
+  标准开场。360 之类的软件会直接拦掉，而且拦了不告诉你，用户看到的就是「点了没反应」。
+  现在只有几条 `netsh advfirewall firewall add/delete rule`，系统签名、不写脚本文件、
+  不做编码，安全软件没有可拦的理由，用户真要看也看得懂
+- **状态栏的字不会再被从左边裁掉**：窗口拉到最小时，底部那句
+  「No devices found · this PC has 1 local address(es)…」原来显示成
+  「…t this PC has 1 addresses」，前半句整个没了。原因是 `anchor="e"` 的 Label
+  宽度不够时 Tk 从左边往外溢。现在自己按像素量宽度，放不下就在**末尾**补省略号，
+  窗口拉宽后自动恢复全文
+- **最小窗口下左栏的「接收端口」不再被压成一条线**：窗口高 580 时，左栏最底下
+  那块说明会被挤到只剩 1 像素。现在设备列表会先让出几行（5 行 → 2 行），
+  端口说明始终完整；高 DPI / 超大字体下实在放不下就整块收起，不留半行字
+- 顺带修掉英文提示里 `Common causes://n` 的错字（本该是换行）、
+  `1 addresses` 的单复数
+- 防火墙确认框里原来写着「规则只认本程序这个 exe，本机别的软件借不到这两个端口」——
+  v1.7.3 改成按端口建之后这句话已经不成立了，现在如实写清代价
+
+**v1.7.5** — 修掉英文界面里被截断的防火墙按钮
+- 英文界面右上角那个按钮原来写 `Allow in firewall again`，宽度不够，实际显示成 `llow in firewall aga` —— 两头都被切掉，看着像界面坏了
+- 改成 `Allow again`，中文界面不动（`重新放行防火墙` 本来就放得下）
+- 只有这一处改动，没有功能变化。中文用户不升也可以
+- 顺带：仓库首页展示图换成 v1.7.4 实拍，旧图是 v1.5.1 的，标题栏还印着旧版本号
 
 **v1.7.4** — 修掉「一键放行之后防火墙还是红的」
 - **状态判据错了，不是放行失败**：v1.7.3 把规则改成按端口建之后，`Program` 字段从 exe 路径变成 `Any`，而状态检查还在拿路径去比 —— `Any` 被当成一个叫 `Any` 的路径，永远对不上，于是灯**恒红**，点了放行也红。现在按端口的规则看端口、按程序的规则看程序，分开判
