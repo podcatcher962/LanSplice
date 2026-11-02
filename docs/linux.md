@@ -59,7 +59,7 @@ sudo sh install.sh
 ### 离线环境（UOS 20 已实测）
 
 信创机器大多是物理隔离内网，`pip` 根本连不出去。**不要单独只拷几个
-`.py` 文件**，请使用完整的 `LanSplice-v1.7.2-linux-kit.tar.gz`。
+`.py` 文件**，请使用完整的 `LanSplice-v1.7.4-linux-kit.tar.gz`。
 
 UOS 20 专业版实测可能同时缺少 `cryptography` 和 `pip3`，apt 还会报
 「无法定位软件包 python3-cryptography」。完整包因此自带四个 wheel：
