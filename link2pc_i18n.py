@@ -324,11 +324,11 @@ S = {
     ),
     "g079": (
         '（没找到，点「手动填写对端地址」）',
-        "(not found — click 'Enter peer address')",
+        "(not found — enter peer code)",
     ),
     "g080": (
         '没找到设备 · 本机有 %d 个地址，见「工具 → 本机网络详情」',
-        'No devices found · this PC has %d addresses, see Tools → My network details',
+        'No devices found · this PC has %d local address(es), see Tools → My network details',
     ),
     "g081": (
         '找到 %d 台设备',
@@ -715,8 +715,8 @@ S = {
         'Allow in firewall',
     ),
     "g177": (
-        '会重新整理本软件的防火墙规则：\n\n  1. 删掉 Windows 自动建的宽松规则\n  2. 重建两条严格规则：TCP %d、UDP %d\n  3. 只允许 192.168.0.0/16、10.0.0.0/8、172.16.0.0/12 这些内网段，\n     公网来源无论如何都进不来\n  4. 规则只认本程序这个 exe，本机别的软件借不到这两个端口\n\n%s\n\n需要点一次「是」授权（管理员权限）。继续？',
-        "This will rebuild the firewall rules for this app:\n\n  1. Delete the loose rule Windows created automatically\n  2. Create two strict rules: TCP %d, UDP %d\n  3. Allow only 192.168.0.0/16, 10.0.0.0/8 and 172.16.0.0/12 (private ranges),\n     so internet sources can never get in\n  4. The rules match this exe only — other programs on this PC cannot borrow the ports\n\n%s\n\nYou'll get one administrator prompt. Continue?",
+        '会重新整理本软件的防火墙规则：\n\n  1. 删掉旧的规则，以及 Windows 弹窗时自动建的那条\n  2. 重建两条按端口的规则：TCP %d、UDP %d\n  3. 只允许 192.168.0.0/16、10.0.0.0/8、172.16.0.0/12 这些内网段，\n     公网来源无论如何都进不来\n  4. 按端口建，所以以后换版本不用再放行一次；代价是本机别的程序\n     若也监听这两个端口，内网同样能连到它\n\n用的是 Windows 自带的 netsh 命令，不写脚本文件、不碰注册表。\n需要点一次「是」授权（管理员权限）。继续？',
+        "This will rebuild the firewall rules for this app:\n\n  1. Delete the old rules and the loose one Windows created automatically\n  2. Create two rules by port: TCP %d, UDP %d\n  3. Allow only 192.168.0.0/16, 10.0.0.0/8 and 172.16.0.0/12 (private ranges),\n     so internet sources can never get in\n  4. Rules are per-port, so future versions need no re-allow. The trade-off:\n     another program on this PC listening on those ports is reachable too\n\nUses the built-in netsh command: no script files, no registry edits.\nYou will get one administrator prompt. Continue?",
     ),
     "g178": (
         '本次同时把公用网络改为专用。',
@@ -983,7 +983,7 @@ S = {
     ),
     "g236": (
         '重新放行防火墙',
-        'Allow in firewall again',
+        'Allow again',
     ),
     "g237": (
         '传输中',
@@ -1975,7 +1975,7 @@ S = {
     ),
     "g477": (
         "规则没有生效。\n\n"
-        "刚才的脚本执行完了，但复查发现仍然没有一条规则能放行这一版。\n\n"
+        "刚才的命令执行完了，但复查发现仍然没有一条规则能放行这一版。\n\n"
         "常见原因：\n"
         "· UAC 窗口被取消，或者点了「否」\n"
         "· 公司/学校的域策略统一推送防火墙规则，本机改不动\n"
@@ -1983,9 +1983,9 @@ S = {
         "可以再点一次「一键放行」。如果是域策略或第三方安全软件，"
         "需要管理员放行 TCP %d 与 UDP %d（仅内网来源）。",
         "The rules did not take effect.\n\n"
-        "The script ran, but a re-check found no rule that actually allows this "
+        "The commands ran, but a re-check found no rule that actually allows this "
         "version.\n\n"
-        "Common causes://n"
+        "Common causes:\n"
         "· The UAC prompt was cancelled or answered with No\n"
         "· A domain policy pushes firewall rules and overrides local ones\n"
         "· A third-party security suite manages the firewall\n\n"
@@ -1996,6 +1996,10 @@ S = {
     "g478": (
         "防火墙规则没生效，点灯重试",
         "Firewall rules did not apply; click the light to retry",
+    ),
+    "g479": (
+        "还没授权，防火墙没改。想放行随时点「一键放行」。",
+        "Not authorised — the firewall is unchanged. Click Allow in firewall when ready.",
     ),
     # ---- v1.5 命令行
     "cli01": (
