@@ -17,6 +17,7 @@ import subprocess
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import font as tkfont
 
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -455,8 +456,204 @@ def _port_spec_has(spec, port):
     return False
 
 
+def place_on(win, parent, w, h):
+    """
+    把对话框摆在父窗口正中。
+
+    直接用 `win.geometry("520x380")`（不带坐标）时，Tk 把窗口扔在屏幕左上角，
+    主窗口明明在屏幕中间，点「发文字」弹出的小窗却窜到角上 —— 用户的观感是
+    「这程序怎么乱弹窗」。这里一次性把尺寸和位置算好再设，避免先出现在角上再跳。
+    """
+    try:
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    except Exception:
+        sw, sh = 1366, 768
+    try:
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+    except Exception:
+        pw = ph = 0
+    if pw <= 1 or ph <= 1:              # 父窗口还没画出来，退回屏幕居中偏上
+        x, y = (sw - w) // 2, (sh - h) // 3
+    else:
+        x, y = px + (pw - w) // 2, py + (ph - h) // 2
+    x = max(0, min(x, max(0, sw - w)))          # 别跑到屏幕外
+    y = max(0, min(y, max(0, sh - h - 40)))     # 给任务栏留点余地
+    win.geometry("%dx%d+%d+%d" % (w, h, x, y))
+
+
+class FitLabel(tk.Label):
+    """
+    宽度不够时从**中间**省，两头都留住 —— 而不是让 Tk 从左边裁掉。
+
+    事故（v1.7.4，小众软件编辑实测的最小窗口）：
+      底部状态栏显示的是「…t this PC has 1 addresses」—— 开头整句没了。
+
+    原因是 anchor="e" 的 Label 一旦分到的宽度小于文字宽度，
+    Tk 不是从右边截，而是把控件当成一个视口，从**左**往外溢 ——
+    用户看到的第一个字就已经是句子中间了。
+
+    只补右边省略也不够：状态栏里最常出现的两种句子，尾巴恰恰是有用的
+    （「… · 存到 C:\\Users\\…\\_xfer」）。所以这里从中间省：
+    头给六成，剩下给尾，中间一个「…」。
+
+    控件本身用 expand 吃掉剩余空间、请求宽度固定 1 字符，
+    这样文字变短不会反过来改变控件宽度（否则会和 pack 死循环）。
+    """
+
+    def __init__(self, master=None, cnf=None, **kw):
+        kw.setdefault("anchor", "e")
+        self._full = kw.get("text", "")
+        if cnf:
+            self._full = cnf.get("text", self._full)
+        tk.Label.__init__(self, master, cnf or {}, **kw)
+        self._font = tkfont.Font(font=self.cget("font"))
+        self.bind("<Configure>", self._refit, add="+")
+
+    def _take_head(self, txt, budget):
+        lo, hi = 0, len(txt)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self._font.measure(txt[:mid]) <= budget:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    def _take_tail(self, txt, budget):
+        lo, hi = 0, len(txt)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self._font.measure(txt[len(txt) - mid:]) <= budget:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    def _refit(self, _e=None):
+        try:
+            w = self.winfo_width()
+            txt = self._full
+            if w <= 1:
+                return
+            budget = w - 4
+            if self._font.measure(txt) <= budget:
+                if tk.Label.cget(self, "text") != txt:
+                    tk.Label.configure(self, text=txt)
+                return
+            # 从**中间**省，两头都留。
+            # 只留头（右边省略）会把「存到 C:\...\_xfer」的落点砍掉，
+            # 只留尾（Tk 原本的做法）会把「已发送 / No devices found」砍掉 ——
+            # 两头都是用户要看的东西。头给六成，是因为一句话的主语和动词在前面。
+            ell = "…"
+            room = budget - self._font.measure(ell)
+            h = self._take_head(txt, int(room * 0.62))
+            t = self._take_tail(txt, room - self._font.measure(txt[:h]))
+            if t <= 0:                       # 尾巴一个字符都放不下，退回头部省略
+                h = self._take_head(txt, room)
+                shown = txt[:h].rstrip() + ell
+            else:
+                # 切点往回挪一点，让它落在空格上。
+                # 不挪的话会切出「1 local addr…ools →」这种半个单词，
+                # 中文没有空格，这段对中文文案不会生效。
+                sp = txt.rfind(" ", 0, h)
+                if sp > 0 and h - sp <= 9:
+                    h = sp
+                tail = txt[len(txt) - t:]
+                sp2 = tail.find(" ")
+                if 0 <= sp2 <= 8:
+                    tail = tail[sp2 + 1:]
+                shown = txt[:h].rstrip() + ell + tail
+            if self._font.measure(shown) > budget:   # 挪出来反而超宽，退回原样
+                shown = txt[:h].rstrip() + ell + txt[len(txt) - t:]
+            tk.Label.configure(self, text=shown)
+        except Exception:
+            pass
+
+    def configure(self, cnf=None, **kw):
+        changed = False
+        if "text" in kw:
+            self._full = kw["text"]
+            changed = True
+        elif isinstance(cnf, dict) and "text" in cnf:
+            self._full = cnf["text"]
+            changed = True
+        out = tk.Label.configure(self, cnf, **kw)
+        if changed:
+            self._refit()
+        return out
+
+    config = configure
+
+    def full_text(self):
+        """完整原文（界面上可能已经被截了）。"""
+        return self._full
+
+
+def _shell_execute_types():
+    """
+    延迟构造 ShellExecuteExW 的参数结构（v1.7.5）。
+
+    为什么不写成模块顶层的 `import ctypes` + 类：图形界面的顶部导入必须能在
+    Linux 上原样跑通 —— `from ctypes import wintypes` 在 Linux 上 import
+    阶段就崩，吃过这个亏，所以 GUI 顶部干脆不许出现 ctypes（见 _test_v171）。
+    而这个结构体只有 Windows 上点「一键放行」时用得到，没必要每次启程都构造。
+
+    返回 (ctypes, 结构体类)。字段顺序照 Win32 文档，一个都不能少 ——
+    cbSize 对不上，ShellExecuteExW 会直接返回失败，而且不告诉你为什么。
+    """
+    import ctypes
+
+    class SEI(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_ulong),
+            ("fMask", ctypes.c_ulong),
+            ("hwnd", ctypes.c_void_p),
+            ("lpVerb", ctypes.c_wchar_p),
+            ("lpFile", ctypes.c_wchar_p),
+            ("lpParameters", ctypes.c_wchar_p),
+            ("lpDirectory", ctypes.c_wchar_p),
+            ("nShow", ctypes.c_int),
+            ("hInstApp", ctypes.c_void_p),
+            ("lpIDList", ctypes.c_void_p),
+            ("lpClass", ctypes.c_wchar_p),
+            ("hkeyClass", ctypes.c_void_p),
+            ("dwHotKey", ctypes.c_ulong),
+            ("hIcon", ctypes.c_void_p),
+            ("hProcess", ctypes.c_void_p),
+        ]
+
+    return ctypes, SEI
+
+
+def _stack_need(frame, skip=()):
+    """
+    一列 pack(fill="x") 的控件排下来，至少要多高。
+
+    只算 reqheight 不够：pady 是 pack 的间距，不在控件自己身上，
+    漏掉它就会少算 40~60 像素 —— 正好是「就差一点点」被切掉的那部分。
+    """
+    total = 0
+    for c in frame.pack_slaves():
+        if c in skip:
+            continue
+        pi = c.pack_info()
+        pady = pi.get("pady", 0)
+        if isinstance(pady, (tuple, list)):
+            total += sum(int(v) for v in pady)
+        else:
+            # 单个值表示上下各留这么多，不是只留一边
+            try:
+                total += 2 * int(str(pady).split()[0])
+            except Exception:
+                pass
+        total += c.winfo_reqheight()
+    return total
+
+
 def _fw_prog_path(raw):
     """把规则里的 Program 字段变成一个可比较的路径；`Any` 一律当「没填」。"""
+
     p = (raw or "").strip()
     if not p or p.lower() in ("any", "*", "-"):
         return ""
@@ -589,6 +786,12 @@ FW_STATUS_PS = (
 # ---------------------------------------------------------------- 主窗口
 
 class App:
+    # 防火墙规则名。固定成常量，是因为「按名字删旧规则」和「按名字查状态」
+    # 必须指的是同一批名字 —— 两处各写一遍字符串，改一处忘一处就会
+    # 出现「删不掉旧规则、于是新规则加不上」的怪现象。
+    FW_RULE_TCP = "LanSplice-TCP"
+    FW_RULE_UDP = "LanSplice-UDP"
+
     def __init__(self, root):
         self.root = root
         # quiet=True：后台启动（开机自启 --min），窗口在托盘里，
@@ -829,12 +1032,13 @@ class App:
                                      fg=C_SUB, font=(FONT, 8), anchor="w")
         self.lbl_peer_sub.pack(side="left", padx=(8, 0))
 
-        self.lbl_sec = tk.Label(top, text="", bg=C_PANEL, fg=C_GREEN, font=(FONT, 8, "bold"))
-        self.lbl_sec.pack(side="right", padx=(8, 14))
-
         # 语言切换：两个小键，当前语言高亮。放首页顶栏右侧，一眼能找到。
+        #
+        # 这里 pack 的先后顺序很要紧：同一侧先 pack 的占住最外边。
+        # 语言键必须先 pack —— 否则窗口一拉窄，Tk 从「最后 pack 的」开始挤压，
+        # 被挤没的正好是它（v1.7.4 就是这样：拉到最窄，中英文切换键整个消失）。
         self.lang_box = tk.Frame(top, bg=C_PANEL)
-        self.lang_box.pack(side="right", pady=10)
+        self.lang_box.pack(side="right", pady=10, padx=(6, 12))
         for _code, _text in (("zh", "中文"), ("en", "EN")):
             _cur = (I18N.get_lang() == _code)
             tk.Button(
@@ -847,6 +1051,11 @@ class App:
                 activebackground=C_BLUE, activeforeground=C_WHITE,
                 bd=0, highlightthickness=0,
             ).pack(side="left", padx=(0, 2))
+
+        # 加密标识：它排在语言键内侧，窗口窄了第一个被收起来的就是它。
+        self.lbl_sec = tk.Label(top, text="", bg=C_PANEL, fg=C_GREEN, font=(FONT, 8, "bold"))
+        self.lbl_sec.pack(side="right", padx=(8, 0))
+        top.bind("<Configure>", self._fit_topbar)
 
         # ---- 快捷设置条：接收目录 + 防火墙（这两个是上手最关键的两步，直接摆在首页）
         qb = tk.Frame(r, bg="#e2e8ec", height=56)
@@ -883,6 +1092,7 @@ class App:
         left = tk.Frame(body, bg=C_PANEL, width=214)
         left.pack(side="left", fill="y", padx=(0, 8))
         left.pack_propagate(False)
+        self.left = left
 
         tk.Label(left, text=_t("g042"), bg=C_PANEL, fg=C_TEXT, font=(FONT, 9, "bold"),
                  anchor="w").pack(fill="x", padx=12, pady=(12, 4))
@@ -920,11 +1130,17 @@ class App:
                                      activebackground="#37474f", activeforeground=C_WHITE)
         self.btn_setcode.pack(fill="x", padx=12)
 
-        tk.Frame(left, bg=C_LINE, height=1).pack(fill="x", padx=12, pady=12)
+        self._left_sep2 = tk.Frame(left, bg=C_LINE, height=1)
+        self._left_sep2.pack(fill="x", padx=12, pady=12)
 
         self.lbl_port = tk.Label(left, text="", bg=C_PANEL, fg=C_SUB, font=(FONT, 8),
                                  anchor="w", justify="left", wraplength=200)
         self.lbl_port.pack(fill="x", padx=12)
+
+        # 设备列表的可视行数按窗口高度伸缩，行高先量出来（跟着字体和 DPI 走）
+        self._line_h = max(12, self.peer_list.winfo_reqheight() // 5)
+        self._left_h = 0
+        left.bind("<Configure>", self._fit_left)
 
         # ---- 右区
         right = tk.Frame(body, bg=C_BG)
@@ -1028,9 +1244,12 @@ class App:
         self.btn_detail.pack(side="right", padx=(10, 0))
         self.btn_detail.config(state="disabled")
 
-        self.lbl_status = tk.Label(inner, text=_t("g067"), bg=C_PANEL, fg=C_SUB,
-                                   font=(FONT, 9), anchor="e", justify="right")
-        self.lbl_status.pack(side="right")
+        # 状态文字用 FitLabel：长度超过剩余宽度时在末尾打「…」。
+        # 请求宽度压到 1 字符 + expand，是为了让它稳定占住「按钮之外的空间」，
+        # 而不是按文字长度去抢位置 —— 抢位置的后果就是窗口一窄，开头被裁掉。
+        self.lbl_status = FitLabel(inner, text=_t("g067"), bg=C_PANEL, fg=C_SUB,
+                                   font=(FONT, 9), width=1)
+        self.lbl_status.pack(side="right", fill="x", expand=True, padx=(8, 0))
 
         self.pbar = ttk.Progressbar(bottom, mode="determinate", maximum=1000)
         self.pbar.pack(fill="x", padx=14, pady=(2, 10))
@@ -1040,6 +1259,65 @@ class App:
         self._refresh_queue_summary()
 
     # ------------------------------------------------------------ 语言
+
+    def _fit_left(self, e=None):
+        """
+        窗口变矮时先缩「设备列表」的行数，别让左栏底部的端口说明被压没。
+
+        事故（v1.7.4，最小窗口 820x580 实测）：
+          「接收端口 47820 / 对端发来的文件存到上面的目录」整块只剩 1 像素高。
+
+        不是没画，是被压没了：同一侧 pack 排不下时，Tk 从**最后**一个控件
+        开始压，而它正好排在最后。给它腾地方的办法不是加高窗口，而是让
+        上面那个可以变矮的列表先让出几行。
+        """
+        try:
+            h = self.left.winfo_height()
+            if h <= 1 or getattr(self, "_fitting", False):
+                return
+            self._fitting = True
+            line = self._line_h or 18
+            # 两块都要除开设备列表再算，否则列表行数一变，「需要多高」也跟着变
+            need_noport = _stack_need(self.left, (self.peer_list,
+                                                  self._left_sep2, self.lbl_port))
+            port_need = (_stack_need(self.left, (self.peer_list,))
+                         - need_noport)
+            show_port = (h - need_noport) >= port_need + 2 * line
+            room = h - need_noport - (port_need if show_port else 0)
+            lines = max(2, min(5, int(room // line)))
+            if int(self.peer_list.cget("height")) != lines:
+                self.peer_list.config(height=lines)
+                self.left.update_idletasks()
+            # 极端情况（高分屏 + 超大字体）：两行列表加端口说明都塞不下，
+            # 就把端口说明整块收起来 —— 留半行字比不显示更难看。
+            if show_port:
+                if not self.lbl_port.winfo_manager():
+                    self._left_sep2.pack(fill="x", padx=12, pady=12)
+                    self.lbl_port.pack(fill="x", padx=12)
+            elif self.lbl_port.winfo_manager():
+                self.lbl_port.pack_forget()
+                self._left_sep2.pack_forget()
+        except Exception:
+            pass
+        finally:
+            self._fitting = False
+
+    def _fit_topbar(self, e):
+        """
+        窗口窄了先收起「AES-256」标签，把位置让给语言切换键。
+
+        以前这里没做任何让步：顶栏全是 pack 死的一行，窗口一拉窄，
+        Tk 按 pack 逆序挤压，最先没的是语言键。用户看到的就是「按钮消失了」。
+        """
+        try:
+            if e.width < 860:
+                if self.lbl_sec.winfo_manager():
+                    self.lbl_sec.pack_forget()
+            else:
+                if not self.lbl_sec.winfo_manager():
+                    self.lbl_sec.pack(side="right", padx=(8, 0))
+        except Exception:
+            pass
 
     def set_language(self, lang):
         if lang == I18N.get_lang():
@@ -1132,6 +1410,12 @@ class App:
         self.lbl_recv.config(text=root_dir)
         self.lbl_recv_port.config(text=_t("g073") % int(self.cfg["tcp_port"]))
         self.lbl_port.config(text=_t("g074") % int(self.cfg["tcp_port"]))
+        # 文字刚才有内容：端口说明从一行变成两行，左栏的总需求高度也变了，
+        # 得重新算一次列表该留几行（第一次 <Configure> 时这里还是空串）。
+        try:
+            self.root.after_idle(self._fit_left)
+        except Exception:
+            pass
 
     def _refresh_code(self):
         self.lbl_code.config(text=L.key_to_code(self.key))
@@ -1677,7 +1961,7 @@ class App:
         self._tx_text_win = win
         win.title(_t("g321"))
         win.configure(bg=C_BG)
-        win.geometry("520x380")
+        place_on(win, self.root, 520, 380)
         win.transient(self.root)
 
         # 底部按钮栏必须先占位，正文后放。
@@ -1769,7 +2053,7 @@ class App:
         self._text_win = win
         win.title(_t("g344"))
         win.configure(bg=C_BG)
-        win.geometry("520x360")
+        place_on(win, self.root, 520, 360)
         win.transient(self.root)
 
         # 同发送窗口：按钮栏先占底，Text 给明确尺寸，别让它把按钮挤出去
@@ -1958,7 +2242,7 @@ class App:
         self._mirror_win = win
         win.title(_t("g370"))
         win.configure(bg=C_BG)
-        win.geometry("640x364")
+        place_on(win, self.root, 640, 364)
         win.transient(self.root)
 
         tk.Label(win, text=_t("g371"), bg=C_BG, fg=C_SUB, font=(FONT, 9),
@@ -3343,13 +3627,28 @@ class App:
     # ------------------------------------------------------------ 防火墙
 
     def _ps(self, script, timeout=25):
-        """跑一段系统管理脚本，返回 (rc, stdout, stderr)。"""
-        exe = "powershell"
+        """
+        跑一段**只读**的 PowerShell 查询，返回 (rc, stdout, stderr)。
+
+        v1.7.5 两处改动，都是冲着「别被安全软件当木马」去的：
+
+          1. 去掉 -ExecutionPolicy Bypass。它对 `-Command` 根本不生效
+             （执行策略只管 .ps1 文件），但「powershell -ExecutionPolicy
+             Bypass」是杀软眼里最典型的可疑命令行之一。
+          2. 加 CREATE_NO_WINDOW。从 GUI 程序里 fork 控制台程序时，
+             Windows 会顺手开一个新的黑框，每次刷新状态灯闪一下。
+
+        这里只查不改：改规则走 `_fw_run_elevated` 里的 netsh。
+        """
+        kw = {}
+        if os.name == "nt":
+            kw["creationflags"] = 0x08000000          # CREATE_NO_WINDOW
         try:
             p = subprocess.run(
-                [exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                ["powershell", "-NoProfile", "-NonInteractive",
+                 "-Command", script],
                 capture_output=True, text=True, timeout=timeout,
-                encoding="utf-8", errors="ignore")
+                encoding="utf-8", errors="ignore", **kw)
             return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
         except Exception as e:
             return -1, "", str(e)
@@ -3383,45 +3682,102 @@ class App:
                 res.append(tuple(parts[:3]))
         return res
 
-    def _fw_script(self, port, auto_private=False):
+    def _fw_commands(self, port):
         """
-        拼「一键放行」要执行的脚本。抽出来是为了能单独测语法 ——
-        这段脚本一旦拼错，用户看到的就是一屏红字。
+        「一键放行」要执行的 netsh 命令，一条一行。
+
+        v1.7.5 把这里的 PowerShell 换成了 netsh —— 起因是小众软件编辑
+        实测后说「隐藏窗口调 PowerShell，360 会拦」。
+
+        旧写法是：
+            Start-Process powershell -Verb RunAs -WindowStyle Hidden
+                -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass',
+                              '-EncodedCommand',<base64>
+        「提权 + 隐藏窗口 + 绕过执行策略 + base64」四个特征叠在一起，
+        正好是挖矿木马的标准开场白。被拦还算客气的，有的直接静默杀掉，
+        用户看到的就是「点了没反应」。
+
+        netsh 是 Windows 自带的防火墙命令行：系统签名、参数就是几条
+        add/delete rule、不写脚本文件、不做 base64。安全软件没有理由拦，
+        用户真要看也看得懂这几行字。
+
+        ＊ 规则仍然按**端口**建，不绑 exe：
+          换版本时文件名从 v1.7.5 变成 v1.7.6，路径一变按 exe 的规则就
+          管不到新文件了，用户会被反复要求放行。
+        ＊ 来源仍然只限内网三段 + 回环，公网进不来。
+        ＊ 代价照旧写在 README 里：本机别的程序若也监听这两个端口，
+          内网同样能连到它 —— 这是我们按端口放行的取舍，不藏着。
         """
-        ps_list = ["$ErrorActionPreference='SilentlyContinue';",
-                   # 旧名 Link2PC 的规则一起清掉，避免升级后两套规则并存。
-                   # 用 -DisplayName 过滤，不要 Get-NetFirewallRule 全表再 Where ——
-                   # 装了很多软件的机器上规则上千条，全表遍历要多花好几秒，
-                   # 而这期间用户面对的是「一键放行」对话框一动不动。
-                   "Get-NetFirewallRule -DisplayName '*LanSplice*','*Link2PC*' "
-                   "-ErrorAction SilentlyContinue | Remove-NetFirewallRule;"]
-        if auto_private:
-            ps_list.append(
-                "Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -ne 'Private' } "
-                "| Set-NetConnectionProfile -NetworkCategory Private;")
-        # 规则**按端口**建，不绑 -Program。
-        #
-        # 为什么改：Windows 的防火墙规则是按 exe 完整路径记的。
-        # 每发一版，文件名就从 v1.7.2.exe 变成 v1.7.3.exe，路径一变旧规则就
-        # 管不到新文件 —— 于是每次升级都要重新放行一次。用户看到的是
-        # 「怎么又问我」，而且点错一次（或系统记住了「阻止」）就再也收不到文件。
-        #
-        # 按端口就不一样了：一条规则管所有版本，换多少次都不用再问。
-        #
-        # 安全性没有退步：
-        #   · RemoteAddress 仍然只放行局域网段，公网连不进来
-        #   · 端口是本软件专用，冲突概率极低
-        #   · 数据本身还有 AES-256-GCM + 配对码两道关
-        # 代价是：本机别的程序若也监听这两个端口，同样能被内网访问。
-        # 这个取舍写在 README 的「防火墙这件事」里，不藏着。
+        # netsh 的 remoteip 收「起-止」区间写法。这三段就是原来的
+        # 192.168.0.0/16、10.0.0.0/8、172.16.0.0/12，只是换了个写法。
+        rng = ("192.168.0.0-192.168.255.255,"
+               "10.0.0.0-10.255.255.255,"
+               "172.16.0.0-172.31.255.255,"
+               "127.0.0.1")
+        cmds = []
+        # 先按名字清旧的：改过端口的、以及 Windows 弹窗时自动建的那条
+        # （它绑的是 exe 路径，留着会和我们的端口规则打架）。
+        # 按名字删是精确匹配，不用遍历全表 —— 规则上千条的机器上，
+        # 遍历一次要好几秒，用户面对的就是一个不动的对话框。
+        for nm in (self.FW_RULE_TCP, self.FW_RULE_UDP,
+                   "LanSplice", "Link2PC", "Link2PC-TCP", "Link2PC-UDP"):
+            cmds.append("netsh advfirewall firewall delete rule name=%s" % nm)
         for proto, pnum in (("TCP", port), ("UDP", L.DISCOVERY_PORT)):
-            ps_list.append(
-                "New-NetFirewallRule -DisplayName 'LanSplice-%s' -Direction Inbound "
-                "-Protocol %s -LocalPort %d -Action Allow -Profile Any "
-                "-RemoteAddress 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,127.0.0.1 "
-                "| Out-Null;" % (proto, proto, pnum))
-        ps_list.append("Write-Output 'L2P-FW-OK'")
-        return "".join(ps_list)
+            cmds.append(
+                "netsh advfirewall firewall add rule name=LanSplice-%s "
+                "dir=in action=allow protocol=%s localport=%d "
+                "remoteip=%s profile=any enable=yes"
+                % (proto, proto, pnum, rng))
+        return cmds
+
+    def _fw_run_elevated(self, cmds, timeout=120):
+        """
+        在一次 UAC 授权里把几条 netsh 命令跑完，返回 (ok, 详情)。
+
+        用 ShellExecuteExW 直接以管理员身份拉起 cmd.exe，而不是
+        「在 PowerShell 里 Start-Process -Verb RunAs」：
+        后者把提权写进了一段脚本，还得再套一层隐藏窗口，特征太重。
+
+        cmd 只做一件事 —— 按顺序调用系统自带的 netsh，然后退出。
+        用户取消 UAC 会返回 1223，这里如实报「已取消」，不当成失败。
+        """
+        if not P.IS_WIN:
+            return False, "not windows"
+        line = " & ".join(cmds)              # cmd 的串联符：前一条失败也继续
+        try:
+            ctypes, SEI = _shell_execute_types()
+            sei = SEI()
+            sei.cbSize = ctypes.sizeof(sei)
+            sei.fMask = 0x00000040           # SEE_MASK_NOCLOSEPROCESS
+            sei.lpVerb = "runas"
+            sei.lpFile = os.path.join(os.environ.get("SystemRoot",
+                                                     r"C:\Windows"),
+                                      "System32", "cmd.exe")
+            sei.lpParameters = "/c " + line
+            sei.nShow = 0                    # SW_HIDE：不留一个黑框闪一下
+            shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+            shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SEI)]
+            shell32.ShellExecuteExW.restype = ctypes.c_int
+            if not shell32.ShellExecuteExW(ctypes.byref(sei)):
+                # 必须用 get_last_error()：windll 默认不收 GetLastError，
+                # 中间随便一次 Python 调用都会把它冲掉。
+                err = ctypes.get_last_error()
+                if err == 1223:              # ERROR_CANCELLED
+                    return False, "cancelled"
+                return False, "ShellExecuteEx failed (%d)" % err
+            h = sei.hProcess
+            if not h:
+                return True, "no-handle"
+            try:
+                ctypes.windll.kernel32.WaitForSingleObject(h, timeout * 1000)
+                code = ctypes.c_ulong(0)
+                ctypes.windll.kernel32.GetExitCodeProcess(
+                    h, ctypes.byref(code))
+                return True, "exit=%d" % code.value
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h)
+        except Exception as e:
+            return False, str(e)
 
     def _offer_reallow(self):
         """
@@ -3521,49 +3877,33 @@ class App:
         except Exception:
             win.geometry("640x384")
 
-    def fw_dialog(self, auto_private=False, quick=False):
+    def fw_dialog(self, quick=False):
+        """
+        一键放行。
+
+        v1.7.6 起没有 auto_private 这个参数了：规则改成 profile=any 之后，
+        公用网络下照样生效，以前那个「要不要把网络改成专用」的追问纯属多余，
+        而且改网络类别是系统级变动，不该由一个传文件的工具顺手做掉。
+        """
         if not P.IS_WIN:
             self._fw_linux_dialog()
             return
         port = int(self.cfg["tcp_port"])
         if not quick:
-            cats = self._net_categories()
-            has_public = any(c not in ("Private", "DomainAuthenticated")
-                             for _i, c in cats)
-
-            if has_public and not auto_private:
-                msg = (_t("g175"))
-                if messagebox.askyesno(_t("g176"), msg, parent=self.root):
-                    auto_private = True
-
-            msg2 = (
-                _t("g177")
-                % (port, L.DISCOVERY_PORT,
-                   _t("g178") if auto_private
-                   else _t("g179")))
-            if not messagebox.askyesno(APP_NAME, msg2, parent=self.root):
+            if not messagebox.askyesno(
+                    APP_NAME, _t("g177") % (port, L.DISCOVERY_PORT),
+                    parent=self.root):
                 return
 
-        ps = self._fw_script(port, auto_private)
-
-        # 提权执行。
-        #
-        # 这里**绝对不能**把脚本用双引号拼进外层 PowerShell 命令行：
-        # 外层的双引号字符串会先做一次变量展开，`$ErrorActionPreference`
-        # 变成它的当前值 `Continue`、`$_` 变成空，脚本就废了 ——
-        # 用户看到的报错正是「无法将 Continue='SilentlyContinue' 识别为 cmdlet」。
-        # 改用 -EncodedCommand（base64 里只有字母数字和 +/=），外层怎么解析都不会动它。
-        inner = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
-        outer = ("Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
-                 "-ArgumentList "
-                 "'-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','%s'" % inner)
-        try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                 "-Command", outer],
-                capture_output=True, text=True, timeout=120)
-        except Exception as e:
-            messagebox.showerror(APP_NAME, _t("g180") % e)
+        cmds = self._fw_commands(port)
+        ok_run, detail = self._fw_run_elevated(cmds)
+        if not ok_run:
+            if detail == "cancelled":
+                # 用户在 UAC 上点了「否」。这不叫失败，别摆一屏红字吓人，
+                # 状态灯本来就还红着，用户随时能再点一次。
+                self.lbl_status.config(text=_t("g479"))
+                return
+            messagebox.showerror(APP_NAME, _t("g180") % detail)
             return
 
         rules = self._fw_rules()
