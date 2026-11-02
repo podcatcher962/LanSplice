@@ -494,6 +494,32 @@ independent of this project's MIT terms.
 
 ## Changelog
 
+**v1.7.6** — addresses the reviewer's notes one by one: no more hidden PowerShell
+- **Firewall rules are now applied with the built-in `netsh`**: the old code ran
+  `Start-Process powershell -Verb RunAs -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand <base64>` —
+  elevation, hidden window, execution-policy bypass and base64 all at once, which is
+  the textbook opening of a miner or stealer. 360-class suites block it silently, so
+  the user just sees "I clicked and nothing happened". Now it is a handful of
+  `netsh advfirewall firewall add/delete rule` lines: signed system binary, no script
+  file, no encoding, and readable by anyone who cares to look
+- **The status bar no longer loses the beginning of its sentence**: at the minimum
+  window size it showed `…t this PC has 1 addresses` instead of the full line, because
+  an `anchor="e"` Label clips from the left when it is too narrow. The text is now
+  measured in pixels and ellipsised at the **end**, and the full line comes back when
+  the window grows
+- **The receive-port block in the left column is no longer squeezed to one pixel** at
+  580 px height: the device list gives up rows first (5 → 2), and if a high-DPI or
+  oversized font still leaves no room the block is hidden entirely rather than
+  half-drawn
+- Also fixed a literal `//n` typo in an English dialog and the `1 addresses` plural
+- The allow dialog used to claim "the rules match this exe only — other programs
+  cannot borrow the ports", which stopped being true in v1.7.3. It now states the
+  actual trade-off
+
+**v1.7.5** — fixes a truncated firewall button in the English UI
+- The button read `Allow in firewall again` and did not fit, so it rendered as
+  `llow in firewall aga`. Shortened to `Allow again`; the Chinese UI is unchanged
+
 **v1.7.4** — fixes "the firewall light stays red after one-click allow"
 - **The status check was wrong, not the allow step**: v1.7.3 moved rules to be port-scoped, so `Program` became `Any`. The check still compared program paths, treated `Any` as a path named `Any`, and therefore *always* reported a stale rule — even right after allowing. Port-scoped rules are now judged by port, program-scoped rules by program
 - **Why the other machine always looked green**: it still had an auto-created `lansplice-vX.Y.Z` rule (with an exe path) from a Windows prompt, which happened to satisfy the old check. Coincidence, not correctness
