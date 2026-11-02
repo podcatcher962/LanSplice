@@ -2,8 +2,12 @@
 
 **简体中文** ｜ [English](README.en.md)
 
-两台 Windows 电脑在同一个局域网里，把文件或文件夹直接推到对方硬盘上。
+两台电脑在同一个局域网里，把文件或文件夹直接推到对方硬盘上。
 **不走网盘，不开 Windows 共享，不插 U 盘。** 界面中英双语，首页一键切换。
+
+Windows 一个 exe 双击就跑，不用装 Python；**统信 UOS 20 真机跑通**（44 项自检 0 失败），
+麒麟 / Deepin / Ubuntu 用同一套离线安装包，断网、没有 pip 也能装起来；macOS 有原生版。
+三端走同一个协议，可以互相传，也可以不架服务器就在内网群聊。
 
 传一半断了能接着传；对端已有同名文件不会被覆盖；剪贴板里的文字可以一键推过去；
 手机扫个码就能用浏览器收发；关窗口只是缩到托盘，接收不中断；
@@ -12,7 +16,7 @@
 ![界面](docs/screenshot-cn.png)
 
 **[⬇ 下载 LanSplice.exe](https://github.com/podcatcher962/LanSplice/releases/latest)** —
-单文件 16 MB，免安装，32 位 / 64 位 Windows 通用。
+单文件 13 MB，免安装，32 位 / 64 位 Windows 通用。
 
 作者：© 永远的兰兰
 
@@ -30,7 +34,7 @@
 | 飞腾 / 鲲鹏 / 龙芯 | ⚠️ 协议与架构无关，但**尚未在真机上验证** |
 | macOS（Intel / Apple Silicon） | ⚠️ 有原生版，**但未在真机 Mac 上验证**：源码可直接跑，也可用 `build_macos.sh` 打成 `.app`；见 [docs/macos.md](docs/macos.md)（还没 Mac？用浏览器方式：[docs/mac-now.md](docs/mac-now.md)） |
 
-**Windows 只有一个文件，不用挑：`LanSplice-v1.7.2.exe`。**
+**Windows 只有一个文件，不用挑：`LanSplice-v1.7.4.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
