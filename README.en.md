@@ -6,6 +6,11 @@ Push files and folders straight onto the other PC's disk — both machines on th
 **No cloud drive, no Windows file sharing (SMB), no USB stick.** The UI ships in Chinese and
 English, switchable from the home screen.
 
+On Windows it is one exe, no Python install; **verified on a real UnionTech UOS 20 machine**
+(44 checks, 0 failures), with an offline installer for Kylin / Deepin / Ubuntu that works
+without pip or a network; there is a native macOS build too. All three speak the same
+protocol, so they transfer between each other — and chat on the LAN without a server.
+
 Transfers resume after a drop; existing files are never silently overwritten; you can push
 the clipboard across with one keystroke; a phone can join through a QR code in its browser;
 closing the window just minimises to the tray so receiving keeps running; two folders can be
@@ -14,7 +19,7 @@ mirrored with one click, and the same exe doubles as a command-line tool for bat
 ![Screenshot](docs/screenshot-en.png)
 
 **[⬇ Download LanSplice.exe](https://github.com/podcatcher962/LanSplice/releases/latest)** —
-one 16 MB file, no installer, runs on both 32-bit and 64-bit Windows.
+one 13 MB file, no installer, runs on both 32-bit and 64-bit Windows.
 
 Author: © Lanlan Eternal (永远的兰兰)
 
@@ -32,7 +37,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
 | macOS (Intel / Apple Silicon) | ⚠️ Native build available, **but not verified on a real Mac yet**: run from source, or build a `.app` with `build_macos.sh`; see [docs/macos.md](docs/macos.md) (no Mac? use browser mode: [docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v1.7.2.exe`.**
+**One file, no decision to make: `LanSplice-v1.7.4.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
