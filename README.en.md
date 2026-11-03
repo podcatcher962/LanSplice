@@ -37,7 +37,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
 | macOS (Intel / Apple Silicon) | ⚠️ Native build available, **but not verified on a real Mac yet**: run from source, or build a `.app` with `build_macos.sh`; see [docs/macos.md](docs/macos.md) (no Mac? use browser mode: [docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v1.7.4.exe`.**
+**One file, no decision to make: `LanSplice-v1.7.7.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -246,7 +246,7 @@ UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium /
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
-Download **[LanSplice-1.7.4-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.4-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
+Download **[LanSplice-1.7.7-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.7-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
 
 ```sh
 sudo sh install.sh
@@ -493,6 +493,33 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v1.7.7** — finishing the visible surface: every dialog now centres, and the diagnostic report is copyable
+- **Dialogs opened in the top-left corner**: only 3 of the 11 Toplevel windows set a position;
+  the other 8 set a size and no coordinates, so Tk dropped them at the default top-left spot.
+  The "send text" window was just the most visible case. All of them now go through
+  `center_win()`, guarded by 18 new tests so a future dialog cannot silently regress.
+- **The diagnostic report could not be read or copied**: a dozen lines inside a messagebox
+  get clipped by the OS and the text cannot be selected. It is now a scrollable window with
+  "Copy all" and "Allow through firewall" at the bottom.
+- **Markdown asterisks leaked into a dialog**: `多半是**另一个窗口还开着**` showed the asterisks
+  verbatim, because messagebox does not render Markdown. Both occurrences now use 「」.
+- **Stale download filenames in the README**: still said `LanSplice-v1.7.4.exe`; fixed in
+  6 places across both languages.
+- **Five messages rewritten in plain language**: Help went from 724 characters across 25 lines
+  (the lower half was a 1.4/1.5 changelog) to 5 steps and 248 characters; the firewall
+  confirmation no longer says "another program on this PC could be reached too" — that line
+  only makes people click No; the failure message dropped "the UAC prompt was cancelled",
+  which cannot happen on that screen (cancelling takes a different branch and never reaches it);
+  the status bar no longer reports "this PC has 1 local address" and says "check the peer has
+  the app open" instead.
+- **Stale firewall rules are now really removed**: the rule Windows creates on first launch is
+  named after the exe (`lansplice-v1.7.6`), so deleting by the old fixed names never matched it —
+  this machine had accumulated 10 of them between v1.7.2 and v1.7.6. The app now scans for every
+  `lansplice*` / `link2pc*` rule first and removes them together.
+- **Buttons were squeezed out of the help window**: once the window shrank to fit its text, the
+  expanding Text widget pushed the button bar (packed after it) to zero height, so Close
+  disappeared on short windows. The bar is now packed to the bottom first.
 
 **v1.7.6** — addresses the reviewer's notes one by one: no more hidden PowerShell
 - **Firewall rules are now applied with the built-in `netsh`**: the old code ran
