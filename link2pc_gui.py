@@ -482,6 +482,56 @@ def place_on(win, parent, w, h):
     win.geometry("%dx%d+%d+%d" % (w, h, x, y))
 
 
+def center_win(win, parent=None, w=None, h=None):
+    """
+    把已经摆好内容的窗口摆到父窗口正中。**每个 Toplevel 都该走这里。**
+
+    v1.7.6 及以前只有 3 个弹窗用了 place_on，另外 8 个直接
+    `win.geometry("640x330")` 不带坐标 —— Tk 就把它扔在屏幕左上角默认位置。
+    小众软件编辑看到的「点发文字窜到左上角」只是其中最显眼的一个，
+    同一个毛病还潜伏在二维码、传输结果、历史、许可等窗口里。
+
+    两种用法：
+      center_win(win, root, 640, 330)   # 尺寸已知
+      center_win(win, root)             # 尺寸由内容撑开，先 update_idletasks 再量
+
+    后者更稳：这些窗口里多行文字会折行，reqwidth 只有排完版才知道，
+    写死的宽高在不同字体/DPI 下要么留白要么挤。
+    """
+    parent = parent if parent is not None else getattr(win, "master", None)
+    if w is None or h is None:
+        try:
+            win.update_idletasks()
+            w = max(1, int(win.winfo_reqwidth()))
+            h = max(1, int(win.winfo_reqheight()))
+        except Exception:
+            w, h = (w or 640), (h or 480)
+    if parent is None:
+        parent = win
+    place_on(win, parent, int(w), int(h))
+
+
+def auto_center(win, parent=None):
+    """
+    按内容撑开的窗口（`resizable(False, False)` 那类）用这个：摆完再量。
+
+    创建 Toplevel 的瞬间 reqwidth 还是 1，直接量会得到 1x1；
+    after_idle 等这一轮 pack 走完，尺寸才是真的。
+    """
+    def _do():
+        try:
+            if not win.winfo_exists():
+                return
+        except Exception:
+            return
+        center_win(win, parent if parent is not None else win.master)
+
+    try:
+        win.after_idle(_do)
+    except Exception:
+        pass
+
+
 class FitLabel(tk.Label):
     """
     宽度不够时从**中间**省，两头都留住 —— 而不是让 Tk 从左边裁掉。
@@ -1496,8 +1546,9 @@ class App:
         if not shown:
             self.peer_list.insert("end", _t("g079"))
             self.clear_peer()
-            self.lbl_status.config(
-                text=_t("g080") % len(me))
+            # v1.7.7：文案改成「检查对端是否开着软件」，不再报本机地址数量
+            # （那个数字用户用不上，还容易让人以为是 IP 配错了）
+            self.lbl_status.config(text=_t("g080"))
             return
         for f in shown:
             self.peer_list.insert(
@@ -2176,6 +2227,7 @@ class App:
         self._mk_btn(bar, _t("g327"), self._close_qr, C_GRAY,
                      width=None).pack(side="right", padx=(6, 0))
 
+        center_win(win, self.root)      # 尺寸由内容撑开，量完再摆正
         win.protocol("WM_DELETE_WINDOW", self._close_qr)
 
     def _close_qr(self):
@@ -2959,11 +3011,13 @@ class App:
         win = tk.Toplevel(self.root)
         win.title(_t("g140"))
         win.configure(bg=C_BG)
-        # 小屏上别超出可用区域：宽度、高度都按屏幕兜一下
+        # 小屏上别超出可用区域：宽度、高度都按屏幕兜一下。
+        # 尺寸先算好、位置等控件摆完再定（见函数末尾的 place_on）——
+        # 只设 "%dx%d" 不给坐标，Tk 会把它扔到左上角默认位置。
         sw = win.winfo_screenwidth()
         sh = win.winfo_screenheight()
-        win.geometry("%dx%d" % (min(780, max(560, sw - 80)),
-                                min(500, max(360, sh - 160))))
+        _w = min(780, max(560, sw - 80))
+        _h = min(500, max(360, sh - 160))
         win.minsize(560, 340)
         win.transient(self.root)
 
@@ -2996,6 +3050,7 @@ class App:
             self._mk_btn(btn_box, _t("g144"),
                          lambda: self.open_peer_dir(r), C_GREEN,
                          width=None).pack(side="left", padx=(10, 0))
+        place_on(win, self.root, _w, _h)
         win.bind("<Escape>", lambda e: win.destroy())
         win.after(30, lambda: self._fit_detail(win, txt, btn_box))
 
@@ -3030,7 +3085,7 @@ class App:
         """
         win = tk.Toplevel(self.root)
         win.title(_t("g387"))
-        win.geometry("960x560")
+        center_win(win, self.root, 960, 560)
         win.minsize(780, 440)
         win.configure(bg=C_BG)
         win.transient(self.root)
@@ -3167,7 +3222,7 @@ class App:
         """一条历史的详情：到底传了哪些文件、哪个失败了、为什么。"""
         d = tk.Toplevel(parent)
         d.title(_t("g409"))
-        d.geometry("700x540")
+        center_win(d, parent, 700, 540)
         d.minsize(560, 400)
         d.configure(bg=C_BG)
         d.transient(parent)
@@ -3552,10 +3607,13 @@ class App:
 
     def show_code(self):
         code = L.key_to_code(self.key)
+        # 先复制再弹框：messagebox 是模态的，放在后面就等于
+        # 「用户关掉窗口之后，状态栏突然冒出一句『配对码已复制』」，
+        # 看着像自己乱跳。复制在前，剪贴板在框还开着时就备好了。
+        self.copy_code()
         messagebox.showinfo(
             _t("g044"),
             _t("g167") % code)
-        self.copy_code()
 
     def copy_code(self):
         code = L.key_to_code(self.key)
@@ -3682,7 +3740,37 @@ class App:
                 res.append(tuple(parts[:3]))
         return res
 
-    def _fw_commands(self, port):
+    def _fw_stale_names(self, limit=40):
+        """
+        现存的本软件规则名，含 Windows 第一次弹「是否允许访问网络」、
+        用户点「是」之后按 exe 路径自动建的那条。
+
+        为什么要扫：按名字删只能删到写死的那几个，而用户机器上真正堆积的
+        是 `lansplice-v1.7.2` … `lansplice-v1.7.6` 这种带版本号的规则，
+        每条都绑着一个早就删掉的旧 exe。不扫出来的话，那句
+        「Windows 弹窗时自动建的那条」在文案里就是空话
+        （实测：netsh 按名字精确匹配，不认通配）。
+        """
+        names = []
+        try:
+            rc, out, _ = self._ps(
+                "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
+                "Where-Object { $_.DisplayName -match 'LanSplice|Link2PC' } | "
+                "ForEach-Object { $_.DisplayName }", timeout=12)
+        except Exception:
+            return names
+        for line in out.splitlines():
+            n = line.strip()
+            if not n or n in names or len(names) >= limit:
+                continue
+            # 命令行是不加引号拼进 cmd 的（见 _test_fwquote 的元字符断言），
+            # 名字里带空格或元字符会把整条命令截断，宁可漏删也不拼坏
+            if any(ch in n for ch in "\"'&|>< "):
+                continue
+            names.append(n)
+        return names
+
+    def _fw_commands(self, port, extra=None):
         """
         「一键放行」要执行的 netsh 命令，一条一行。
 
@@ -3707,6 +3795,8 @@ class App:
         ＊ 来源仍然只限内网三段 + 回环，公网进不来。
         ＊ 代价照旧写在 README 里：本机别的程序若也监听这两个端口，
           内网同样能连到它 —— 这是我们按端口放行的取舍，不藏着。
+        ＊ extra=v1.7.7 起由 `_fw_stale_names()` 扫出来的历史规则名，
+          把带版本号的那种一起删干净。
         """
         # netsh 的 remoteip 收「起-止」区间写法。这三段就是原来的
         # 192.168.0.0/16、10.0.0.0/8、172.16.0.0/12，只是换了个写法。
@@ -3719,8 +3809,13 @@ class App:
         # （它绑的是 exe 路径，留着会和我们的端口规则打架）。
         # 按名字删是精确匹配，不用遍历全表 —— 规则上千条的机器上，
         # 遍历一次要好几秒，用户面对的就是一个不动的对话框。
-        for nm in (self.FW_RULE_TCP, self.FW_RULE_UDP,
-                   "LanSplice", "Link2PC", "Link2PC-TCP", "Link2PC-UDP"):
+        # 带版本号的 exe 规则名（lansplice-v1.7.6）写死不全，靠 extra 补。
+        names = [self.FW_RULE_TCP, self.FW_RULE_UDP,
+                 "LanSplice", "Link2PC", "Link2PC-TCP", "Link2PC-UDP"]
+        for n in (extra or []):
+            if n not in names:
+                names.append(n)
+        for nm in names:
             cmds.append("netsh advfirewall firewall delete rule name=%s" % nm)
         for proto, pnum in (("TCP", port), ("UDP", L.DISCOVERY_PORT)):
             cmds.append(
@@ -3820,7 +3915,7 @@ class App:
         win = tk.Toplevel(self.root)
         win.title(_t("g440"))
         win.configure(bg=C_BG)
-        win.geometry("640x330")
+        center_win(win, self.root, 640, 330)
         win.minsize(560, 300)
         win.transient(self.root)
 
@@ -3873,9 +3968,11 @@ class App:
             win.update_idletasks()
             bottom = bar.winfo_y() + bar.winfo_height()
             if bottom > 120:
-                win.geometry("640x%d" % (bottom + 12))
+                place_on(win, self.root, 640, bottom + 12)
+            else:
+                place_on(win, self.root, 640, 384)
         except Exception:
-            win.geometry("640x384")
+            place_on(win, self.root, 640, 384)
 
     def fw_dialog(self, quick=False):
         """
@@ -3895,7 +3992,7 @@ class App:
                     parent=self.root):
                 return
 
-        cmds = self._fw_commands(port)
+        cmds = self._fw_commands(port, extra=self._fw_stale_names())
         ok_run, detail = self._fw_run_elevated(cmds)
         if not ok_run:
             if detail == "cancelled":
@@ -4012,10 +4109,17 @@ class App:
         self.events.put(("diag", "\n".join(out)))
 
     def _show_diag(self, text):
+        """
+        诊断报告。
+
+        v1.7.6 及以前是 `messagebox.askyesno(title, text + "要现在修复吗")`：
+        报告十几行，messagebox 会被系统截成一屏还带滚动条假象，
+        字选不中、复制不出来 —— 用户想发给你看，只能截图。
+        改成可滚、可复制的窗口，底部直接给「一键放行防火墙」。
+        """
         self.lbl_status.config(text=_t("g067"))
-        if messagebox.askyesno(_t("g209"), text + _t("g210"),
-                               parent=self.root):
-            self.fw_dialog()
+        return self._info_dialog(_t("g209"), text, 660, 540, copyable=True,
+                                 extra=(_t("g040"), self.fw_dialog, C_BLUE))
 
     def security_check(self):
         lines = []
@@ -4040,18 +4144,28 @@ class App:
 
     # ------------------------------------------------------------ 帮助
 
-    def _info_dialog(self, title, body, w=600, h=480):
+    def _info_dialog(self, title, body, w=600, h=480, copyable=False, extra=None):
         """
         可滚动、可复制的说明窗口。
 
         帮助文本越来越长，messagebox 会撑到屏幕外面去，
         而且里面字还选不中、复制不出来。
+
+        v1.7.7：加了两个可选能力 ——
+          copyable=True  底部多一个「复制全部」，诊断报告要能贴给别人看
+          extra=(文字, 回调, 颜色)  多一个业务按钮，省得报告看完还要去菜单找
         """
         win = tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=C_BG)
-        win.geometry("%dx%d" % (w, h))
+        center_win(win, self.root, w, h)
         win.transient(self.root)
+
+        # 按钮栏必须先 pack 到底部：文本框是 fill=both + expand，
+        # 后 pack 的按钮栏会被它挤成 0 高（窗口矮时最明显，v1.7.7 帮窗口收高才露出来）
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(side="bottom", fill="x", padx=12, pady=10)
+
         wrap = tk.Frame(win, bg=C_LINE)
         wrap.pack(fill="both", expand=True, padx=12, pady=(12, 0))
         sb = tk.Scrollbar(wrap)
@@ -4063,15 +4177,37 @@ class App:
         txt.pack(side="left", fill="both", expand=True, padx=1, pady=1)
         txt.insert("1.0", body)
         txt.config(state="disabled")
-        bar = tk.Frame(win, bg=C_BG)
-        bar.pack(fill="x", padx=12, pady=10)
+
+        def copy_all():
+            if self._set_clipboard(body):
+                self.lbl_status.config(text=_t("g141"))
+
+        if copyable:
+            self._mk_btn(bar, _t("g143"), copy_all, "#546e7a",
+                         width=None).pack(side="left")
+        if extra:
+            label, cb, color = extra
+            self._mk_btn(bar, label, cb, color,
+                         width=None).pack(side="left", padx=(10, 0))
         self._mk_btn(bar, _t("g327"), win.destroy, C_GRAY,
                      width=None).pack(side="right")
         win.bind("<Escape>", lambda e: win.destroy())
         return win
 
     def show_help(self):
-        self._info_dialog(_t("g030"), _t("g224"))
+        """
+        v1.7.7：按估算的折行数给高度（中文 46 字/行，宁可略高），
+        固定 480 高的窗口底下会空一大片。
+
+        后来作者把「1.4 / 1.5 新增」两段也写了进去，26 行塞不进 520，
+        所以上限改成跟着屏幕走（屏高的 78%，最多 620）：
+        1080 屏能一次看全，1366×768 那种本子留给滚动条。
+        """
+        body = _t("g224")
+        rows = sum(max(1, -(-len(line) // 46)) for line in body.split("\n"))
+        cap = min(620, int(self.root.winfo_screenheight() * 0.78))
+        self._info_dialog(_t("g030"), body, 600,
+                          max(300, min(cap, rows * 22 + 80)))
 
     def show_disclaimer(self):
         messagebox.showinfo(
@@ -4093,7 +4229,7 @@ class App:
         """
         win = tk.Toplevel(self.root)
         win.title(_t("g430"))
-        win.geometry("640x580")
+        center_win(win, self.root, 640, 580)
         win.minsize(520, 420)
         win.configure(bg=C_BG)
         win.transient(self.root)
@@ -4559,16 +4695,8 @@ class App:
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         win.bind("<Escape>", lambda _e: win.destroy())
 
-        # 居中到主窗口上方
-        win.update_idletasks()
-        try:
-            rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
-            rw, rh = self.root.winfo_width(), self.root.winfo_height()
-            ww, wh = win.winfo_reqwidth(), win.winfo_reqheight()
-            win.geometry("+%d+%d" % (max(0, rx + (rw - ww) // 2),
-                                     max(0, ry + (rh - wh) // 3)))
-        except Exception:
-            pass
+        # 居中到主窗口上方（尺寸由内容撑开，量完再摆）
+        center_win(win, self.root)
         win.grab_set()
         win.focus_force()
 
