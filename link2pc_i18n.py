@@ -327,8 +327,8 @@ S = {
         "(not found — enter peer code)",
     ),
     "g080": (
-        '没找到设备 · 本机有 %d 个地址，见「工具 → 本机网络详情」',
-        'No devices found · this PC has %d local address(es), see Tools → My network details',
+        '没有找到设备，检查对端机器是否已经打开软件',
+        'No devices found — check the peer has the app open',
     ),
     "g081": (
         '找到 %d 台设备',
@@ -379,16 +379,16 @@ S = {
         '  (no adapter info)',
     ),
     "g093": (
-        '主机名：%s\n\n本机地址：\n%s\n\n两台机器要互传，必须各有一条**同网段**的地址。\n192.168.56.x / 192.168.51.x / 172.17.x 这类基本是\n虚拟机、Hyper-V 或 VPN 的虚拟网卡，只有本机内部存在，\n对端连不上，发现广播也到不了那里。\n\n如果在列表里看到 192.168.0.x（或你家路由器那个网段），\n就用那条地址。',
-        "Host name: %s\n\nAddresses on this PC:\n%s\n\nBoth machines need an address on the **same subnet**.\n192.168.56.x / 192.168.51.x / 172.17.x are usually virtual\nadapters from a VM, Hyper-V or a VPN — they only exist inside\nthis machine, so the peer can neither reach them nor hear the\ndiscovery broadcast there.\n\nIf you see a 192.168.0.x address (or whatever your router uses),\nthat's the one to use.",
+        '主机名：%s\n\n本机地址：\n%s\n\n两台机器要互传，必须各有一条「同网段」的地址。\n192.168.56.x / 192.168.51.x / 172.17.x 这类基本是\n虚拟机、Hyper-V 或 VPN 的虚拟网卡，只有本机内部存在，\n对端连不上，发现广播也到不了那里。\n\n如果在列表里看到 192.168.0.x（或你家路由器那个网段），\n就用那条地址。',
+        "Host name: %s\n\nAddresses on this PC:\n%s\n\nBoth machines need an address on the 'same subnet'.\n192.168.56.x / 192.168.51.x / 172.17.x are usually virtual\nadapters from a VM, Hyper-V or a VPN — they only exist inside\nthis machine, so the peer can neither reach them nor hear the\ndiscovery broadcast there.\n\nIf you see a 192.168.0.x address (or whatever your router uses),\nthat's the one to use.",
     ),
     "g094": (
         '本机网络详情',
         'My network details',
     ),
     "g095": (
-        '还没选对端。先点「工具 → 重新查找设备」。',
-        'No peer selected. Use Tools → Find devices again.',
+        '还没有选择对端设备，点窗口左边的「重新查找」。',
+        'No peer selected yet — click "Find devices again" on the left.',
     ),
     "g096": (
         '正在验证…',
@@ -443,8 +443,8 @@ S = {
         'The queue is empty — drop some files in first.',
     ),
     "g109": (
-        '还没选对端。点「工具 → 重新查找设备」。',
-        'No peer selected. Use Tools → Find devices again.',
+        '还没有选择对端设备，点窗口左边的「重新查找」。',
+        'No peer selected yet — click "Find devices again" on the left.',
     ),
     "g110": (
         '等待',
@@ -619,8 +619,8 @@ S = {
         'Fetch from peer',
     ),
     "g153": (
-        '输入对端接收目录下的相对路径（例如  城市声音志\\北京）：',
-        "Enter a path relative to the peer's receive folder (e.g. Albums\\Beijing):",
+        '输入对端接收目录下的相对路径，例如：城市声音志\\北京',
+        "Enter a path relative to the peer's receive folder, e.g. Albums\\Beijing",
     ),
     "g154": (
         '正在向对端查询…',
@@ -663,8 +663,8 @@ S = {
         'Receiver failed to start: %s\n\n%s',
     ),
     "g164": (
-        '端口一直被占用。多半是**另一个窗口还开着**（旧版本、或者点了两次图标）。\n把多余的窗口关掉，再点「工具 → 接收端开关」重开。',
-        'The port stays busy. Usually **another copy of the app is still running** (an older version, or you double-clicked the icon).\nClose the extra window, then use Tools → Receiver on/off to start it again.',
+        '可能还有另一个窗口开着（旧版本，或者图标点了两次）。\n\n在任务栏或右下角托盘区（点 ^ 展开）找到它，右键「退出 LanSplice」。\n关闭时选「彻底退出」；选「最小化到托盘」端口还占着。\n\n再点「工具 → 接收端开关」重新打开。',
+        "Another copy may still be running (an older version, or a double-click on the icon).\n\nFind it on the taskbar or in the notification area (click ^ to expand), right-click it and choose \"Quit LanSplice\".\nWhen closing, pick \"Quit completely\" — \"Minimise to tray\" keeps the port taken.\n\nThen use Tools → Receiver on/off to start it again.",
     ),
     "g165": (
         '可能是防火墙拦截，可到「安全 → 放行防火墙」处理。',
@@ -675,8 +675,8 @@ S = {
         'Receiver on',
     ),
     "g167": (
-        '本机配对码：\n\n        %s\n\n把这串码抄到另一台，在「安全 → 填写对端配对码」里填进去。\n\n或者反过来，把另一台的码填到本机。两台一致才能连上。\n\n配对码属于密码，别发到群里、别截图外传。',
-        "Pairing code for this PC:\n\n        %s\n\nCopy this code to the other machine and enter it under Security → Enter peer pairing code.\n\nOr the other way round: enter the other machine's code here. Both must match before they can connect.\n\nTreat it like a password — don't post it in group chats or share screenshots.",
+        '本机配对码：\n\n        %s\n\n记下这串码，到对端电脑的窗口左侧点「填写对端配对码」，在输入框里填进去。\n\n反过来也行：把对端的配对码填到本机。两边一致才能配对。\n\n配对码属于密码，别发到群里、别截图外传。',
+        "Pairing code for this PC:\n\n        %s\n\nNote it down, then on the other PC click \"Enter peer code\" on the left and type it into the box.\n\nOr the other way round: enter that machine\'s code here. Both sides must match.\n\nTreat it like a password — don't post it in group chats or share screenshots.",
     ),
     "g168": (
         '配对码已复制',
@@ -708,15 +708,30 @@ S = {
     ),
     "g175": (
         '检测到本机有网卡被 Windows 归为「公用网络」。\n\n本软件原来只对「专用网络」放行，所以在公用网络下\n端口是关着的——这正是「都在同一网段却连不上」最常见的原因。\n\n建议：把家里的网络改成「专用」。这不会让外网访问到本机，\n只是告诉 Windows「这是我信任的家庭网络」。\n\n要改成专用并重设防火墙规则吗？\n（选「否」则只放宽防火墙，网络类别不动）',
-        "Windows has classified one of your network adapters as a **Public network**.\n\nThis app used to allow traffic only on Private networks, so on a Public\nnetwork the port stays closed — which is the most common reason two machines\non the same subnet still can't see each other.\n\nSuggestion: switch the home network to Private. This does NOT expose this PC\nto the internet — it only tells Windows 'this is my trusted home network'.\n\nSwitch it to Private and rebuild the firewall rules?\n(Choose No to only relax the firewall and leave the network category alone)",
+        "Windows has classified one of your network adapters as a 'Public network'.\n\nThis app used to allow traffic only on Private networks, so on a Public\nnetwork the port stays closed — which is the most common reason two machines\non the same subnet still can't see each other.\n\nSuggestion: switch the home network to Private. This does NOT expose this PC\nto the internet — it only tells Windows 'this is my trusted home network'.\n\nSwitch it to Private and rebuild the firewall rules?\n(Choose No to only relax the firewall and leave the network category alone)",
     ),
     "g176": (
         '放行防火墙',
         'Allow in firewall',
     ),
     "g177": (
-        '会重新整理本软件的防火墙规则：\n\n  1. 删掉旧的规则，以及 Windows 弹窗时自动建的那条\n  2. 重建两条按端口的规则：TCP %d、UDP %d\n  3. 只允许 192.168.0.0/16、10.0.0.0/8、172.16.0.0/12 这些内网段，\n     公网来源无论如何都进不来\n  4. 按端口建，所以以后换版本不用再放行一次；代价是本机别的程序\n     若也监听这两个端口，内网同样能连到它\n\n用的是 Windows 自带的 netsh 命令，不写脚本文件、不碰注册表。\n需要点一次「是」授权（管理员权限）。继续？',
-        "This will rebuild the firewall rules for this app:\n\n  1. Delete the old rules and the loose one Windows created automatically\n  2. Create two rules by port: TCP %d, UDP %d\n  3. Allow only 192.168.0.0/16, 10.0.0.0/8 and 172.16.0.0/12 (private ranges),\n     so internet sources can never get in\n  4. Rules are per-port, so future versions need no re-allow. The trade-off:\n     another program on this PC listening on those ports is reachable too\n\nUses the built-in netsh command: no script files, no registry edits.\nYou will get one administrator prompt. Continue?",
+        '开始重新整理本软件的防火墙规则：\n\n'
+        '  1. 删掉本软件以前版本建的规则（LanSplice、Link2PC 开头的都清掉），\n'
+        '     包括第一次启动时你点过「允许」、系统按程序路径自动建的那条\n'
+        '  2. 重建两条按端口的规则：TCP %d 传文件、UDP %d 内网发现\n'
+        '  3. 只允许这三个内网地址连进来：192.168.x.x（家里路由器最常见）、\n'
+        '     10.x.x.x（公司常见）、172.16~31.x.x。公网地址进不来\n\n'
+        '用的是 Windows 自带的 netsh 命令，不写脚本文件、不碰注册表。\n'
+        '需要点一次「是」授权（管理员权限）。继续？',
+        "This will rebuild the firewall rules for this app:\n\n"
+        "  1. Delete the rules older versions left behind (anything named LanSplice* or\n"
+        "     Link2PC*), including the one Windows created by program path when you\n"
+        "     clicked Allow on first launch\n"
+        "  2. Create two rules by port: TCP %d for file transfer, UDP %d for LAN discovery\n"
+        "  3. Allow only these private ranges in: 192.168.x.x (most home routers),\n"
+        "     10.x.x.x (common at work), 172.16-31.x.x. Internet addresses can't get in\n\n"
+        "Uses the built-in netsh command: no script files, no registry edits.\n"
+        "You will get one administrator prompt. Continue?",
     ),
     "g178": (
         '本次同时把公用网络改为专用。',
@@ -735,8 +750,8 @@ S = {
         'Restarting the receiver so the new rules take effect…',
     ),
     "g182": (
-        '已重设。当前规则 %d 条%s。\n\n%s\n\n如果刚才在 UAC 点了「否」，规则不会变，可以再点一次。\n\n验证：另一台点「工具 → 重新查找设备」。',
-        'Done. %d rule(s) now%s.\n\n%s\n\nIf you clicked No on the UAC prompt, nothing changed — just run it again.\n\nVerify: on the other machine, click Tools → Find devices again.',
+        '已重设。当前规则 %d 条%s。\n\n%s\n\n验证：另一台点「工具 → 重新查找设备」。',
+        'Done. %d rule(s) now%s.\n\n%s\n\nVerify: on the other machine, click Tools → Find devices again.',
     ),
     "g183": (
         '（启用中）',
@@ -903,35 +918,61 @@ S = {
         'Security check',
     ),
     "g224": (
-        '① 两台机器各开一次，左边会显示本机配对码。\n② 让两台的配对码一致：\n   点「复制配对码」，到另一台点「填写对端配对码」粘贴。\n③ 工具 → 重新查找设备，选中对端。\n④ 把文件或文件夹拖进虚线框（也可以点「选择文件/文件夹」）。\n⑤ 点「① 发送到对端」。\n\n文件会存到对端的接收目录（默认 E:\\_xfer），目录结构保持不变。\n同名同大小的文件会自动跳过，不会重传。\n\n首次使用如果对端找不到本机，到「安全 → 放行防火墙」点一次。\n\n'
-        '—— 1.4 新增 ——\n'
-        '· 断点续传：传一半断了，再点一次「发送」会从断的地方接着传，不用从头来。\n'
-        '· 同名不覆盖：对端已经有同名文件时，自动存成「xxx (2).ext」，绝不顶掉旧的。\n'
-        '· 发文字：Ctrl+Shift+V 把本机剪贴板直接推到对端，对端点一下就能粘贴。\n'
-        '· 手机传文件：文件 → 手机传文件，手机扫二维码用浏览器收发，手机不用装任何东西。\n'
-        '· 关窗口只是缩到托盘，接收不中断；托盘右键可开关「开机自动启动」。\n'
-        '· 设置 → 传完再校验文件：慢一些，但能查出读盘、写盘层面的错误。\n\n'
-        '—— 1.5 新增 ——\n'
-        '· 文件夹镜像：工具 → 镜像文件夹…，选一对目录，只补新增和改过的文件，适合长期同步。\n'
-        '· 命令行：LanSplice.exe send <路径> --to <IP> 可以写进批处理和计划任务；\n'
-        '  另有 devices（扫局域网）和 version。不带任何参数仍然是图形界面。\n'
-        '  退出码 0 = 全成，1 = 有文件没传成（可以重跑，断点会接上），2 = 没开始。\n'
-        '  连不上时会说清是「对端没开」还是「不在同一个路由器下」，不再只说 timed out。',
-        "① Open the app on both machines; the pairing code shows on the left.\n② Make the two codes match:\n   click 'Copy code', then on the other machine click 'Enter peer code' and paste.\n③ Tools → Find devices again, select the peer.\n④ Drag files or folders into the dashed box (or use 'Choose files/folder').\n⑤ Click '① Send to peer'.\n\nFiles land in the peer's receive folder (default E:\\_xfer) with the folder structure intact.\nFiles with the same name and size are skipped, never re-sent.\n\nIf the peer can't find this machine the first time, click Security → Allow in firewall once.\n\n"
+        "1. 两台电脑都装好软件，双击打开，窗口左边显示本机配对码。\n"
+        "2. 让两台的配对码一样：在一台上点「复制配对码」，\n"
+        "   到另一台上点「填写对端配对码」填进去。\n"
+        "3. 点窗口左边的「重新查找」。对端也开着软件的话，\n"
+        "   列表里会出现它，点一下选中。\n"
+        "4. 把要传的文件或文件夹拖进虚线框，\n"
+        "   也可以点「选择文件…」「选择文件夹…」。\n"
+        "5. 点窗口左下角的「① 发送到对端」。\n"
+        "\n"
+        "传过去的文件存在对端的接收目录里（默认 E:\\_xfer，没有 E 盘就存在用户目录）。\n"
+        "同一个文件再传一次会直接跳过；同名但内容改过的，会另存为「xxx (2)」，不覆盖原文件。\n"
+        "\n"
+        "第一次用，对端找不到本机：点窗口右下角的「一键放行防火墙」。\n"
+        "\n"
+        "—— 1.4 新增 ——\n"
+        "· 断点续传\n"
+        "· 同名不覆盖\n"
+        "· 发文字：两台直接推文字，在对端弹出窗口，可以复制\n"
+        "· 手机传文件：文件 → 手机传文件，手机扫码就能收发，不用装东西\n"
+        "· 关窗口只是缩到托盘，接收不中断；托盘右键可以「开机自动启动」\n"
+        "· 设置 → 传完再校验文件：慢一点，但更可靠\n"
+        "\n"
+        "—— 1.5 新增 ——\n"
+        "· 文件夹镜像：工具 → 镜像文件夹…，只补新增和改过的，适合长期同步\n"
+        "· 命令行：LanSplice.exe send <路径> --to <IP>，可以写进批处理和计划任务；\n"
+        "  另有 devices（扫局域网）和 version",
+        "1. Install the app on both PCs and open it — your pairing code is on the left.\n"
+        "2. Make the two codes match: click \"Copy code\" on one,\n"
+        "   then \"Enter peer code\" on the other and type it in.\n"
+        "3. Click \"Find again\" on the left. If the peer has the app open,\n"
+        "   it shows up in the list — click to select it.\n"
+        "4. Drag files or folders into the dashed box,\n"
+        "   or use \"Choose files…\" / \"Choose folder…\".\n"
+        "5. Click \"①  Send to peer\" at the bottom left.\n"
+        "\n"
+        "Files land in the peer's receive folder (E:\\_xfer by default; without an\n"
+        "E: drive it goes to your user folder). Sending the same file again is\n"
+        "skipped; a same-name file with different content is saved as \"xxx (2)\".\n"
+        "\n"
+        "If the peer cannot find this PC the first time, click \"Allow in firewall\"\n"
+        "at the bottom right.\n"
+        "\n"
         "—— New in 1.4 ——\n"
-        "· Resume: if a transfer breaks, press Send again and it continues from where it stopped.\n"
-        "· No silent overwrite: an existing file with the same name becomes 'xxx (2).ext'.\n"
-        "· Send text: Ctrl+Shift+V pushes the local clipboard to the peer.\n"
-        "· Phone transfer: File → Phone transfer, scan the QR code with a phone browser.\n"
-        "· Closing the window only minimises to the tray; receiving keeps running.\n"
-        "· Settings → verify after transfer: slower, but catches disk-level errors.\n\n"
+        "· Resume an interrupted transfer\n"
+        "· Same-name files are never overwritten\n"
+        "· Text: push text straight to the peer; it pops up there and can be copied\n"
+        "· Phone transfer: File → Phone transfer — scan the code, nothing to install\n"
+        "· Closing the window only hides it to the tray; right-click the tray icon\n"
+        "  for \"Start with Windows\"\n"
+        "· Settings → Verify the file after transfer: slower, more reliable\n"
+        "\n"
         "—— New in 1.5 ——\n"
-        "· Folder mirror: Tools → Mirror a folder…; pick a pair of folders and only new or changed files are copied.\n"
-        "· Command line: LanSplice.exe send <path> --to <IP> for batch files and scheduled tasks;\n"
-        "  plus devices (scan the LAN) and version. No arguments still opens the GUI.\n"
-        "  Exit codes: 0 = all done, 1 = some files failed (safe to rerun, resume picks up), 2 = never started.\n"
-        "  A failed connection says whether the peer is closed or just not on the same router,\n"
-        "  instead of only 'timed out'.",
+        "· Folder mirror: Tools → Mirror a folder… — only new and changed files\n"
+        "· Command line: LanSplice.exe send <path> --to <IP>, usable in batch files\n"
+        "  and scheduled tasks; also devices (scan the LAN) and version",
     ),
     "g225": (
         '本软件用于同一局域网内的两台自有设备之间传输文件。\n\n· 请勿用于传输违法内容。\n· 请妥善保管配对码，配对码泄露等于把接收目录对外开放。\n· 对端发来的可执行文件请自行判断风险，本软件不做病毒扫描。\n· 作者不对使用本软件造成的任何数据损失或法律后果负责。',
@@ -1974,28 +2015,22 @@ S = {
         "Nobody to send to — make sure the others are on this LAN with the same code.",
     ),
     "g477": (
-        "规则没有生效。\n\n"
-        "刚才的命令执行完了，但复查发现仍然没有一条规则能放行这一版。\n\n"
-        "常见原因：\n"
-        "· UAC 窗口被取消，或者点了「否」\n"
-        "· 公司/学校的域策略统一推送防火墙规则，本机改不动\n"
-        "· 装的是第三方安全软件，它接管了防火墙\n\n"
-        "可以再点一次「一键放行」。如果是域策略或第三方安全软件，"
-        "需要管理员放行 TCP %d 与 UDP %d（仅内网来源）。",
-        "The rules did not take effect.\n\n"
-        "The commands ran, but a re-check found no rule that actually allows this "
-        "version.\n\n"
-        "Common causes:\n"
-        "· The UAC prompt was cancelled or answered with No\n"
-        "· A domain policy pushes firewall rules and overrides local ones\n"
-        "· A third-party security suite manages the firewall\n\n"
-        "You can run the one-click allow again. If it is a domain policy or a "
-        "security suite, ask an administrator to allow TCP %d and UDP %d "
-        "(LAN sources only).",
+        '这次的防火墙规则没能生效。\n\n'
+        '请再点一次「一键放行」。如果还是这样，多半是这两种情况：\n'
+        '· 公司或学校的域策略规定了规则，本机改不动\n'
+        '· 装了第三方安全软件，它接管了防火墙\n\n'
+        '这两种都要管理员放行 TCP %d 与 UDP %d（只对内网）。\n'
+        '把这一屏截图发给他，比转述快。',
+        "The firewall rules didn't take effect this time.\n\n"
+        "Click 'Allow in firewall' again. If it still fails, it's usually one of two things:\n"
+        "· a domain policy from work or school fixes the rules, so this machine can't change them\n"
+        "· a third-party security suite has taken over the firewall\n\n"
+        "Either way an administrator has to allow TCP %d and UDP %d (private networks only).\n"
+        "A screenshot of this message is the quickest thing to send them.",
     ),
     "g478": (
-        "防火墙规则没生效，点灯重试",
-        "Firewall rules did not apply; click the light to retry",
+        '防火墙规则没生效，点「一键放行」重试',
+        'Firewall rules not in effect — click Allow to retry',
     ),
     "g479": (
         "还没授权，防火墙没改。想放行随时点「一键放行」。",
