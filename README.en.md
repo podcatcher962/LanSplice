@@ -2,19 +2,19 @@
 
 [简体中文](README.md) ｜ **English**
 
-Push files and folders straight onto the other PC's disk — both machines on the same LAN.
-**No cloud drive, no Windows file sharing (SMB), no USB stick.** The UI ships in Chinese and
-English, switchable from the home screen.
+Connect two PCs to the same router and push files or folders straight onto the other disk.
 
-On Windows it is one exe, no Python install; **verified on a real UnionTech UOS 20 machine**
-(44 checks, 0 failures), with an offline installer for Kylin / Deepin / Ubuntu that works
-without pip or a network; there is a native macOS build too. All three speak the same
-protocol, so they transfer between each other — and chat on the LAN without a server.
+No cloud drive, no Windows file sharing, no USB stick. On Windows it is one exe — no Python
+to install. Verified on a real UnionTech UOS 20 machine; Kylin, Deepin and Ubuntu use the same
+offline package and install without a network.
 
-Transfers resume after a drop; existing files are never silently overwritten; you can push
-the clipboard across with one keystroke; a phone can join through a QR code in its browser;
-closing the window just minimises to the tray so receiving keeps running; two folders can be
-mirrored with one click, and the same exe doubles as a command-line tool for batch files.
+First time takes five steps: open the app on both PCs, enter one PC's pairing code on the
+other, click "Find again" on the left, drag your files into the dashed box, then click
+"① Send to peer" at the bottom left. If the other PC doesn't show up, click
+"Allow in firewall" at the bottom right.
+
+Interrupted transfers resume where they stopped, and a file already on the other side is never
+overwritten. Closing the window only minimises to the tray — receiving keeps running.
 
 ![Screenshot](docs/screenshot-en.png)
 
