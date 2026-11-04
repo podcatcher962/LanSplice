@@ -2,11 +2,13 @@
 
 [简体中文](README.md) ｜ **English**
 
-Connect two PCs to the same router and push files or folders straight onto the other disk.
+Two PCs on the same router and the same subnet can push files, folders or text straight to each
+other, and chat in a window on the peer side. There is no client and no server — nothing in
+between.
 
-No cloud drive, no Windows file sharing, no USB stick. On Windows it is one exe — no Python
-to install. Verified on a real UnionTech UOS 20 machine; Kylin, Deepin and Ubuntu use the same
-offline package and install without a network.
+No Windows file sharing, no USB stick. On Windows it is one exe — no Python to install.
+Verified on a real UnionTech UOS 20 machine; Kylin, Deepin and Ubuntu use the same offline
+package and install without a network.
 
 First time takes five steps: open the app on both PCs, enter one PC's pairing code on the
 other, click "Find again" on the left, drag your files into the dashed box, then click
