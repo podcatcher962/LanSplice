@@ -39,7 +39,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
 | macOS (Intel / Apple Silicon) | ⚠️ Native build available, **but not verified on a real Mac yet**: run from source, or build a `.app` with `build_macos.sh`; see [docs/macos.md](docs/macos.md) (no Mac? use browser mode: [docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v1.7.7.exe`.**
+**One file, no decision to make: `LanSplice-v1.7.8.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -248,7 +248,7 @@ UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium /
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
-Download **[LanSplice-1.7.7-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.7-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
+Download **[LanSplice-1.7.8-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.8-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
 
 ```sh
 sudo sh install.sh
@@ -495,6 +495,22 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v1.7.8** — a drive root (`E:\`) as the receive folder rejected every file
+- The error said "path escapes the receive folder: 夜无疆.txt" and not a byte was written.
+  The check appended a separator to the receive folder before comparing the prefix, but
+  `E:\` already ends with `\`, so it became `E:\\` and `E:\夜无疆.txt` could never start
+  with it. A subfolder (`E:\Downloads`) worked, which is why this stayed hidden. The
+  Linux `/` root had the same bug and is fixed too.
+- The escape guard is no looser: `..`, foreign drive letters and Windows reserved device
+  names are still rejected.
+- Four regression tests added: drive root accepts a file, accepts a nested path, still
+  rejects `..`, still rejects another drive.
+- **Also fixed in the same setup: startup that seemed to hang.** The receiver used to
+  walk the whole receive folder at startup to find leftover parts (`.l2p-parts`). With
+  `E:\` as the folder that means scanning the entire drive, and no connection was
+  accepted until it finished. The cleanup now runs on a background thread with a cap of
+  20,000 directories and 3 seconds; whatever is left waits for the next start.
 
 **v1.7.7** — finishing the visible surface: every dialog now centres, and the diagnostic report is copyable
 - **Dialogs opened in the top-left corner**: only 3 of the 11 Toplevel windows set a position;
