@@ -250,6 +250,28 @@ def autostart_get():
     return False
 
 
+def prefers_dark():
+    """
+    系统是不是深色主题。
+
+    放在这里而不是界面模块：Windows 专属 API 一律进本文件，
+    GUI 里出现裸 import winreg 会被回归测试判红（v1.7.1 立的规矩）。
+    Linux / macOS 先按浅色处理 —— 这两边各自的主题检测各有各的坑，
+    与其猜错，不如让「跟随系统」在它们身上表现成浅色，用户可以手动选深色。
+    """
+    if not IS_WIN:
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            v, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
+        return int(v) == 0
+    except Exception:
+        return False
+
+
 def autostart_set(on):
     """开 / 关开机自启。返回是否成功。"""
     if IS_WIN:
