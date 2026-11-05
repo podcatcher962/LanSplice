@@ -60,7 +60,7 @@ MAGIC = b"L2P1"
 # 版本号只在这里写一次。
 # 以前图形界面和命令行各写一份，升级时忘了改其中一处，
 # 就会出现「窗口标题 1.5.0、命令行 version 1.4.0」这种自相矛盾。
-APP_VER = "1.7.7"
+APP_VER = "1.7.8"
 
 DISCOVERY_PORT = 47821
 ANNOUNCE_EVERY = 8             # 秒。接收端隔这么久主动宣告一次自己
@@ -649,7 +649,10 @@ def safe_join(root, rel):
 
     root_abs = os.path.abspath(root)
     target = os.path.abspath(os.path.join(root_abs, *parts))
-    if target != root_abs and not target.lower().startswith(root_abs.lower() + os.sep):
+    # 盘根（E:\ 或 /）本身就以分隔符结尾，再拼一个会变成 E:\\，
+    # 于是 E:\foo.txt 永远不以 E:\\ 开头，整盘当接收目录时全部误判越界。
+    root_pref = root_abs if root_abs.endswith(os.sep) else root_abs + os.sep
+    if target != root_abs and not target.lower().startswith(root_pref.lower()):
         raise ValueError(_t("c018") % rel)
     return target
 
@@ -696,19 +699,34 @@ def transfer_id(rel, size, mtime):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def clean_parts(root, days=PART_KEEP_DAYS):
+def clean_parts(root, days=PART_KEEP_DAYS, max_dirs=20000, budget=3.0):
     """
     清掉过期的残留分片。
 
     分片是刻意保留的（为了续传），但用户取消过的传输会一直躺在那儿占空间。
     只删 PART_DIR 里超过 days 天的 .part，绝不碰用户文件。
+
+    为什么要有目录数和秒数两个上限：接收目录可以设成盘根（E:\\），那儿可能
+    躺着几十万个文件夹。清理只是顺手做的事，绝不该让服务端等它 —— 早先这里是
+    无上限的递归遍历，盘根当接收目录时得扫完整块盘才开始接连接，用户看到的就是
+    「点了没反应」。超了上限就先返回，已清的照数报，下次启动接着来。
     """
     removed = 0
     cutoff = time.time() - days * 86400
+    deadline = time.time() + max(0.0, budget)
+    seen = 0
     try:
         for cur, dirs, _files in os.walk(root):
+            seen += 1
+            if seen > max_dirs or time.time() > deadline:
+                break
             if PART_DIR not in dirs:
                 continue
+            # 分片目录里只有 .part，没必要再往里走
+            try:
+                dirs.remove(PART_DIR)
+            except ValueError:
+                pass
             pdir = os.path.join(cur, PART_DIR)
             try:
                 names = os.listdir(pdir)
@@ -840,6 +858,14 @@ class PeerServer(threading.Thread):
     def start_server(self):
         self.start()
 
+    def _clean_parts_bg(self):
+        try:
+            n = clean_parts(self.recv_root)
+            if n:
+                self.log(_t("c063") % n)
+        except Exception:
+            pass
+
     def run(self):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -851,10 +877,10 @@ class PeerServer(threading.Thread):
             self.running = True
             os.makedirs(self.recv_root, exist_ok=True)
             self.log(_t("c020") % (self.port, self.recv_root))
-            # 清掉过期分片：分片是为续传故意留的，但取消过的传输会一直占地方
-            n = clean_parts(self.recv_root)
-            if n:
-                self.log(_t("c063") % n)
+            # 清过期分片放后台：接收目录可能是盘根，遍历要花时间，
+            # 挡在 accept 之前就等于「服务端半天不接连接」。
+            threading.Thread(target=self._clean_parts_bg, daemon=True,
+                             name="LanSplice-PartClean").start()
         except Exception as e:
             self.error = str(e)
             self.log(_t("c021") % e)
