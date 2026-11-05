@@ -12,6 +12,8 @@ import time
 import socket
 import queue
 import base64
+import shutil
+import zipfile
 import threading
 import subprocess
 
@@ -57,6 +59,15 @@ except Exception:
     WEB = None
     HAS_WEB = False
 
+# 目录自动同步（v1.8.0）。缺了这个模块只是少一个功能，界面其余部分照常，
+# 所以和上面几个一样用软导入。
+try:
+    import link2pc_sync as SYNC
+    HAS_SYNC = True
+except Exception:
+    SYNC = None
+    HAS_SYNC = False
+
 APP_NAME = "LanSplice"
 APP_TITLE = "LanSplice · 双机直传"
 APP_VER = L.APP_VER          # 唯一来源在 core，别在这里再写死一份
@@ -67,7 +78,7 @@ COPYRIGHT = "© 永远的兰兰"
 # 命名互斥量：同一台机器、同一个登录会话里只允许一个图形界面。
 # 用 Local\ 而不是 Global\ —— 两个 Windows 用户各开一个互不干扰。
 # Linux 上这个名字会被转成 /tmp/lansplice-Local_LanSplice-SingleInstance.lock
-MUTEX_NAME = "Local\\LanSplice-SingleInstance"
+MUTEX_NAME = os.environ.get("L2P_MUTEX") or "Local\\LanSplice-SingleInstance"
 
 
 def single_instance_acquire(name=MUTEX_NAME):
@@ -136,19 +147,161 @@ def focus_existing():
 
 
 # ---------------------------------------------------------------- 配色
+#
+# 两套调色板 + 一个「把旧颜色换成新颜色」的遍历器。
+#
+# 为什么不干脆按主题重建界面：整个 App 是一个 5000 行的类，界面和状态长在一起，
+# 重建等于把手上正传着的任务全扔掉。改颜色本身就够了 —— 控件都在树上，
+# 按色值对一遍即可，代价是这里的映射表要维护全。
 
-C_BG = "#eceff1"          # 窗口底色
-C_PANEL = "#dfe3e6"       # 侧栏 / 顶栏
-C_CARD = "#f4f6f7"        # 卡片
-C_LINE = "#c7cfd4"        # 分隔线
-C_TEXT = "#1f2a30"        # 主文字
-C_SUB = "#5f7079"         # 次要文字
-C_BLUE = "#1976d2"
-C_GREEN = "#2e7d32"
-C_PURPLE = "#6a1b9a"
-C_RED = "#c62828"
-C_GRAY = "#90a4ae"
-C_WHITE = "#ffffff"
+THEME_LIGHT = {
+    "bg": "#eceff1", "panel": "#dfe3e6", "card": "#f4f6f7", "line": "#c7cfd4",
+    "text": "#1f2a30", "sub": "#5f7079", "field": "#ffffff",
+    "blue": "#1976d2", "green": "#2e7d32", "purple": "#6a1b9a",
+    "red": "#c62828", "gray": "#90a4ae", "white": "#ffffff",
+    "bar": "#e2e8ec", "textbg": "#fbfcfd", "sel": "#bbdefb",
+    "hover": "#cfd8dc", "trough": "#d3dade",
+    "gray_btn": "#607d8b", "gray_btn2": "#546e7a", "gray_btn3": "#78909c",
+    "gray_btn4": "#455a64", "gray_active": "#37474f",
+    "warn": "#e65100", "err2": "#b0413e",
+    "scroll": "#c7cfd4", "scroll_trough": "#e6ebee",
+}
+
+THEME_DARK = {
+    "bg": "#161b1e", "panel": "#1b2226", "card": "#202a2f", "line": "#39444a",
+    "text": "#e6ecef", "sub": "#9fb0b8", "field": "#26333a",
+    "blue": "#64b5f6", "green": "#66bb6a", "purple": "#8e5cd0",
+    "red": "#ef6b6b", "gray": "#93a4ae", "white": "#ffffff",
+    "bar": "#1b2226", "textbg": "#182024", "sel": "#2f4b63",
+    "hover": "#37474f", "trough": "#2a343a",
+    "gray_btn": "#4e5f6b", "gray_btn2": "#465560", "gray_btn3": "#5d6f7b",
+    "gray_btn4": "#3d4a52", "gray_active": "#5a6c78",
+    "warn": "#ffab70", "err2": "#d98a87",
+    "scroll": "#4e5f6b", "scroll_trough": "#1b2226",
+}
+
+C_BG = THEME_LIGHT["bg"]          # 窗口底色
+C_PANEL = THEME_LIGHT["panel"]    # 侧栏 / 顶栏
+C_CARD = THEME_LIGHT["card"]      # 卡片
+C_LINE = THEME_LIGHT["line"]      # 分隔线
+C_TEXT = THEME_LIGHT["text"]      # 主文字
+C_SUB = THEME_LIGHT["sub"]        # 次要文字
+C_BLUE = THEME_LIGHT["blue"]
+C_GREEN = THEME_LIGHT["green"]
+C_PURPLE = THEME_LIGHT["purple"]
+C_RED = THEME_LIGHT["red"]
+C_GRAY = THEME_LIGHT["gray"]
+C_WHITE = THEME_LIGHT["white"]
+
+# 当前生效的一套（切换时整体换掉）
+PALETTE = dict(THEME_LIGHT)
+
+
+def palette(name):
+    return dict(THEME_DARK if name == "dark" else THEME_LIGHT)
+
+
+def apply_palette(name):
+    """把模块级颜色常量换成某一套。必须在建界面之前调用。"""
+    global C_BG, C_PANEL, C_CARD, C_LINE, C_TEXT, C_SUB
+    global C_BLUE, C_GREEN, C_PURPLE, C_RED, C_GRAY, C_WHITE, PALETTE
+    p = palette(name)
+    PALETTE = p
+    C_BG, C_PANEL, C_CARD, C_LINE = p["bg"], p["panel"], p["card"], p["line"]
+    C_TEXT, C_SUB = p["text"], p["sub"]
+    C_BLUE, C_GREEN, C_PURPLE = p["blue"], p["green"], p["purple"]
+    C_RED, C_GRAY, C_WHITE = p["red"], p["gray"], p["white"]
+    return p
+
+
+# 旧值 -> 新值。控件身上凡是这几个属性里的色值命中，就换掉。
+_COLOR_OPTS = ("background", "foreground", "activebackground", "activeforeground",
+               "selectbackground", "selectforeground", "disabledforeground",
+               "highlightbackground", "highlightcolor", "insertbackground",
+               "troughcolor", "inactiveselectbackground")
+
+
+def theme_swap(old_name, new_name):
+    a, b = palette(old_name), palette(new_name)
+    swap = {}
+    for k in a:
+        if k in b and a[k].lower() != b[k].lower():
+            swap[a[k].lower()] = b[k]
+    return swap
+
+
+def recolor_tree(widget, swap):
+    """把一棵控件树上命中的颜色换掉。改不动的（不是这个属性）就跳过。"""
+    stack = [widget]
+    while stack:
+        w = stack.pop()
+        try:
+            stack.extend(w.winfo_children())
+        except Exception:
+            pass
+        for opt in _COLOR_OPTS:
+            try:
+                cur = str(w.cget(opt))
+            except Exception:
+                continue
+            new = swap.get(cur.lower())
+            if not new:
+                continue
+            try:
+                w.configure(**{opt: new})
+            except Exception:
+                pass
+        # 多行文本里的标签各有各的颜色，得单独过一遍
+        try:
+            for tag in w.tag_names():
+                for opt in ("foreground", "background"):
+                    try:
+                        cur = str(w.tag_cget(tag, opt))
+                    except Exception:
+                        continue
+                    new = swap.get(cur.lower())
+                    if new:
+                        try:
+                            w.tag_configure(tag, **{opt: new})
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+
+def system_prefers_dark():
+    """系统是不是深色。查注册表那部分收在 link2pc_platform，见 P.prefers_dark。"""
+    try:
+        return bool(P.prefers_dark())
+    except Exception:
+        return False
+
+
+def set_dark_titlebar(win, dark=True):
+    """
+    Win10 1809+ 给标题栏上深色。
+
+    属性号换过：20H1 之前是 19，之后是 20。两个都试一遍，失败就算了 ——
+    老系统上标题栏是白的，不影响用。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        win.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        if not hwnd:
+            hwnd = win.winfo_id()
+        v = ctypes.c_int(1 if dark else 0)
+        for attr in (20, 19):
+            try:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 FONT = "Microsoft YaHei UI"       # 实际值在启动时由 pick_font() 重新选定
 
@@ -219,7 +372,14 @@ def load_cfg():
     d.setdefault("clip_auto", False)      # 收到文字不自动改剪贴板
     d.setdefault("last_peer", {})         # {"ip":..,"port":..,"name":..}
     d.setdefault("web_port", 47822)       # 手机网页端端口
+    # 主程序一启动就把手机网页服务开好。
+    # 以前要用户先点「手机传文件」才起服务，安卓客户端那边表现就是
+    # 连不上、白屏，看起来像坏了。默认开，config.json 里可关。
+    d.setdefault("web_keep", True)
     d.setdefault("mirror_jobs", [])       # v1.6.1 常用镜像任务
+    d.setdefault("sync_jobs", [])         # v1.8.0 自动同步任务
+    d.setdefault("sync_on", True)         # 开着程序就同步
+    d.setdefault("theme", "auto")         # 浅色 / 深色 / auto（跟随系统）
     save_cfg(d)
     return d
 
@@ -849,6 +1009,10 @@ class App:
         self.quiet = False
         self.cfg = load_cfg()
         I18N.set_lang(self.cfg.get("lang") or default_lang())
+        # 配色要在建控件之前定下来：所有 C_* 常量都是建控件时读的，
+        # 之后切换靠 recolor_tree() 逐个换，不用重建界面。
+        self.theme_name = self._resolve_theme()
+        apply_palette(self.theme_name)
         try:
             self.key = base64.b64decode(self.cfg["pair_key"])
         except Exception:
@@ -900,6 +1064,9 @@ class App:
         self._mirror_win = None         # 文件夹镜像窗口
         self._mirror_ui = None          # (win, pbar, lbl, btn)
         self.mirror_cancel = threading.Event()
+        self._sync_win = None           # 自动同步窗口（v1.8.0）
+        self._sync_rows = {}            # job id -> treeview item
+        self.sync = None                # 同步引擎，_start_sync() 里建
 
         self._build_ui()
         self._start_server()
@@ -910,6 +1077,7 @@ class App:
         self.root.after(300, self._poll_inbox)     # 右键菜单投进来的路径
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._init_tray()
+        self._start_sync()
 
     # ------------------------------------------------------------ 界面
 
@@ -919,12 +1087,97 @@ class App:
         r.geometry("900x640")
         r.minsize(820, 580)
         r.configure(bg=C_BG)
+        set_dark_titlebar(r, self.theme_name == "dark")
 
+        self._apply_styles()
+        self._build_body(r)
+
+    def _resolve_theme(self, mode=None):
+        """把配置里的 light/dark/auto 解析成实际要用的那一套。"""
+        mode = (mode or self.cfg.get("theme") or "auto").lower()
+        if mode == "auto":
+            return "dark" if system_prefers_dark() else "light"
+        return "dark" if mode == "dark" else "light"
+
+    def set_theme(self, mode):
+        """
+        换配色。不重建界面 —— 手上可能正传着文件，重建等于把任务扔掉。
+        做法是把控件树按色值对一遍：老配色 -> 新配色，24 组映射。
+        """
+        self.cfg["theme"] = mode
+        save_cfg(self.cfg)
+        new = self._resolve_theme()
+        old = self.theme_name
+        if new == old:
+            self._sync_theme_menu()
+            return
+        swap = theme_swap(old, new)
+        self.theme_name = new
+        apply_palette(new)
+        recolor_tree(self.root, swap)
+        self._apply_styles()
+        self._style_menus()
+        self._style_scrollbars()
+        set_dark_titlebar(self.root, new == "dark")
+        for w in self.root.winfo_children():
+            if isinstance(w, tk.Toplevel):
+                set_dark_titlebar(w, new == "dark")
+        self._sync_theme_menu()
+
+    def _sync_theme_menu(self):
+        try:
+            self.theme_var.set(self.cfg.get("theme", "auto"))
+        except Exception:
+            pass
+
+    def _style_menus(self):
+        """tk.Menu 不吃 ttk 样式，得自己刷。否则深色界面上挂着一排白菜单。"""
+        for w in self.root.winfo_children():
+            if isinstance(w, tk.Menu):
+                self._menu_colors(w, PALETTE["card"], PALETTE["text"],
+                                  PALETTE["hover"])
+
+    def _style_scrollbars(self, root=None):
+        """
+        tk.Scrollbar 是系统控件，默认浅灰。深色界面上会留一条白边。
+        ttk.Scrollbar 不用管 —— 它跟着 Treeview 的主题走。
+        """
+        stack = [root or self.root]
+        while stack:
+            w = stack.pop()
+            try:
+                stack.extend(w.winfo_children())
+            except Exception:
+                pass
+            if not isinstance(w, tk.Scrollbar):
+                continue
+            try:
+                w.configure(bg=PALETTE["scroll"],
+                            troughcolor=PALETTE["scroll_trough"],
+                            activebackground=PALETTE["gray_btn"],
+                            highlightbackground=PALETTE["scroll_trough"], bd=0,
+                            relief="flat")
+            except Exception:
+                pass
+
+    def _menu_colors(self, m, bg, fg, active_bg):
+        try:
+            m.configure(bg=bg, fg=fg, activebackground=active_bg,
+                        activeforeground=fg, selectcolor=fg, disabledforeground=C_GRAY)
+        except Exception:
+            pass
+        for c in m.winfo_children():
+            if isinstance(c, tk.Menu):
+                self._menu_colors(c, bg, fg, active_bg)
+
+    def _apply_styles(self):
+        """ttk 的样式（表格、进度条、输入框）。换主题时重新调一次。"""
         style = ttk.Style()
         try:
             style.theme_use("clam")
         except Exception:
             pass
+
         style.configure("TFrame", background=C_BG)
         style.configure("Panel.TFrame", background=C_PANEL)
         style.configure("Card.TFrame", background=C_CARD, relief="flat")
@@ -942,14 +1195,17 @@ class App:
                         borderwidth=0)
         style.configure("Treeview.Heading", background=C_PANEL, foreground=C_TEXT,
                         font=(FONT, 9, "bold"), relief="flat")
-        style.map("Treeview", background=[("selected", "#bbdefb")],
+        style.map("Treeview", background=[("selected", PALETTE["sel"])],
                   foreground=[("selected", C_TEXT)])
-        style.map("Treeview.Heading", background=[("active", "#cfd8dc")])
-        style.configure("TProgressbar", background=C_BLUE, troughcolor="#d3dade",
+        style.map("Treeview.Heading", background=[("active", PALETTE["hover"])])
+        style.configure("TProgressbar", background=C_BLUE, troughcolor=PALETTE["trough"],
                         borderwidth=0, thickness=14)
-        style.configure("TEntry", fieldbackground="#ffffff", font=(FONT, 9))
+        style.configure("TEntry", fieldbackground=PALETTE["field"], font=(FONT, 9))
 
+    def _build_body(self, r):
+        """界面骨架。只建一次 —— 换主题是改颜色，不重跑这里。"""
         # ---- 菜单
+        self.theme_var = tk.StringVar(value=self.cfg.get("theme", "auto"))
         m = tk.Menu(r, font=(FONT, 9))
         r.config(menu=m)
 
@@ -966,6 +1222,9 @@ class App:
         fm.add_command(label=_t("g328"), command=self.send_clipboard)
         fm.add_separator()
         fm.add_command(label=_t("g360"), command=self.show_qr_share)
+        fm.add_command(label=_t("g511a"), command=self.send_to_phone)
+        fm.add_command(label=_t("g512a"),
+                       command=lambda: self.send_to_phone(folder=True))
         fm.add_separator()
         fm.add_command(label=_t("g012"), command=self.show_result_detail)
         fm.add_command(label=_t("g386"), command=self.history_dialog)
@@ -983,8 +1242,16 @@ class App:
         tm.add_command(label=_t("g020"), command=self.clear_queue)
         tm.add_separator()
         tm.add_command(label=_t("g370"), command=self.mirror_dialog)
+        tm.add_command(label=_t("g480"), command=self.sync_dialog)
         tm.add_separator()
         tm.add_command(label=_t("g021"), command=self.toggle_server)
+        tm.add_separator()
+        tm.add_radiobutton(label=_t("g520"), variable=self.theme_var, value="light",
+                           command=lambda: self.set_theme("light"))
+        tm.add_radiobutton(label=_t("g521"), variable=self.theme_var, value="dark",
+                           command=lambda: self.set_theme("dark"))
+        tm.add_radiobutton(label=_t("g522"), variable=self.theme_var, value="auto",
+                           command=lambda: self.set_theme("auto"))
         m.add_cascade(label=_t("g022"), menu=tm)
 
         sm = tk.Menu(m, tearoff=0, font=(FONT, 9))
@@ -1046,6 +1313,8 @@ class App:
                             command=self.ask_close_action_again)
         stm.add_command(label=_t("g355"), command=self.open_cfg_folder)
         m.add_cascade(label=_t("g354"), menu=stm)
+        self._style_menus()
+        self._style_scrollbars()
 
         r.bind("<Control-m>", lambda e: self.open_chat())
         r.bind("<Control-o>", lambda e: self.pick_files())
@@ -1094,7 +1363,7 @@ class App:
             tk.Button(
                 self.lang_box, text=_text,
                 command=lambda c=_code: self.set_language(c),
-                bg=C_BLUE if _cur else "#cfd8dc",
+                bg=C_BLUE if _cur else PALETTE["hover"],
                 fg=C_WHITE if _cur else C_TEXT,
                 font=(FONT, 8) + (("bold",) if _cur else ()),
                 relief="flat", cursor="hand2", padx=7, pady=1,
@@ -1108,29 +1377,29 @@ class App:
         top.bind("<Configure>", self._fit_topbar)
 
         # ---- 快捷设置条：接收目录 + 防火墙（这两个是上手最关键的两步，直接摆在首页）
-        qb = tk.Frame(r, bg="#e2e8ec", height=56)
+        qb = tk.Frame(r, bg=PALETTE["bar"], height=56)
         qb.pack(fill="x")
         qb.pack_propagate(False)
         tk.Frame(r, bg=C_LINE, height=1).pack(fill="x")
 
-        tk.Label(qb, text=_t("g037"), bg="#e2e8ec", fg=C_TEXT,
+        tk.Label(qb, text=_t("g037"), bg=PALETTE["bar"], fg=C_TEXT,
                  font=(FONT, 9, "bold")).pack(side="left", padx=(14, 8), pady=14)
-        self.lbl_recv = tk.Label(qb, text="", bg="#e2e8ec", fg=C_BLUE,
+        self.lbl_recv = tk.Label(qb, text="", bg=PALETTE["bar"], fg=C_BLUE,
                                  font=(FONT, 10, "bold"), anchor="w")
         self.lbl_recv.pack(side="left")
-        self.lbl_recv_port = tk.Label(qb, text="", bg="#e2e8ec", fg=C_SUB,
+        self.lbl_recv_port = tk.Label(qb, text="", bg=PALETTE["bar"], fg=C_SUB,
                                       font=(FONT, 8), anchor="w")
         self.lbl_recv_port.pack(side="left", padx=(8, 10))
         self._mk_btn(qb, _t("g038"), self.set_recv_root, C_BLUE, width=7).pack(side="left", padx=(0, 4))
-        self._mk_btn(qb, _t("g039"), self.open_recv_root, "#607d8b", width=6).pack(side="left")
+        self._mk_btn(qb, _t("g039"), self.open_recv_root, PALETTE["gray_btn"], width=6).pack(side="left")
 
         # 按钮一开始就写对：Linux 上没有「一键」，只有「把命令给你」。
         # 等线程回来再改文字的话，开机那一两秒是误导的。
         self.btn_fw = self._mk_btn(
             qb, _t("g433") if not P.IS_WIN else _t("g040"),
-            self.fw_dialog, "#e65100", width=14)
+            self.fw_dialog, PALETTE["warn"], width=14)
         self.btn_fw.pack(side="right", padx=(6, 14))
-        self.lbl_fw = tk.Label(qb, text=_t("g041"), bg="#e2e8ec", fg=C_SUB,
+        self.lbl_fw = tk.Label(qb, text=_t("g041"), bg=PALETTE["bar"], fg=C_SUB,
                                font=(FONT, 9, "bold"))
         self.lbl_fw.pack(side="right", padx=(0, 4))
         self.lbl_fw.bind("<Button-1>", lambda e: self._refresh_fw_status())
@@ -1149,14 +1418,15 @@ class App:
 
         self.peer_list = tk.Listbox(left, height=5, bg=C_CARD, fg=C_TEXT,
                                     font=(FONT, 9), relief="flat", activestyle="none",
-                                    selectbackground="#bbdefb", selectforeground=C_TEXT,
+                                    selectbackground=PALETTE["sel"], selectforeground=C_TEXT,
                                     highlightthickness=0, borderwidth=0)
         self.peer_list.pack(fill="x", padx=12)
         self.peer_list.bind("<<ListboxSelect>>", self.on_pick_peer)
+        self._add_phone_row()
 
         self.btn_scan = tk.Button(left, text=_t("g043"), command=self.scan_peers,
-                                  bg="#546e7a", fg=C_WHITE, font=(FONT, 9),
-                                  relief="flat", cursor="hand2", activebackground="#37474f",
+                                  bg=PALETTE["gray_btn2"], fg=C_WHITE, font=(FONT, 9),
+                                  relief="flat", cursor="hand2", activebackground=PALETTE["gray_active"],
                                   activeforeground=C_WHITE)
         self.btn_scan.pack(fill="x", padx=12, pady=(6, 12))
 
@@ -1169,15 +1439,15 @@ class App:
         self.lbl_code.pack(fill="x", padx=12)
 
         self.btn_copy = tk.Button(left, text=_t("g045"), command=self.copy_code,
-                                  bg="#546e7a", fg=C_WHITE, font=(FONT, 9),
+                                  bg=PALETTE["gray_btn2"], fg=C_WHITE, font=(FONT, 9),
                                   relief="flat", cursor="hand2",
-                                  activebackground="#37474f", activeforeground=C_WHITE)
+                                  activebackground=PALETTE["gray_active"], activeforeground=C_WHITE)
         self.btn_copy.pack(fill="x", padx=12, pady=(6, 4))
 
         self.btn_setcode = tk.Button(left, text=_t("g046"), command=self.enter_code,
-                                     bg="#546e7a", fg=C_WHITE, font=(FONT, 9),
+                                     bg=PALETTE["gray_btn2"], fg=C_WHITE, font=(FONT, 9),
                                      relief="flat", cursor="hand2",
-                                     activebackground="#37474f", activeforeground=C_WHITE)
+                                     activebackground=PALETTE["gray_active"], activeforeground=C_WHITE)
         self.btn_setcode.pack(fill="x", padx=12)
 
         self._left_sep2 = tk.Frame(left, bg=C_LINE, height=1)
@@ -1214,8 +1484,8 @@ class App:
 
         btns = tk.Frame(self.drop, bg=C_CARD)
         btns.pack(pady=(8, 0))
-        self._mk_btn(btns, _t("g050"), self.pick_files, "#607d8b", width=None).pack(side="left", padx=4)
-        self._mk_btn(btns, _t("g051"), self.pick_folder, "#607d8b", width=None).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g050"), self.pick_files, PALETTE["gray_btn"], width=None).pack(side="left", padx=4)
+        self._mk_btn(btns, _t("g051"), self.pick_folder, PALETTE["gray_btn"], width=None).pack(side="left", padx=4)
         self._mk_btn(btns, _t("g052"), self.clear_queue, "#90a4ae", width=None).pack(side="left", padx=4)
         self._mk_btn(btns, _t("g320"), self.send_text_dialog, C_PURPLE,
                      width=None).pack(side="left", padx=4)
@@ -1242,10 +1512,10 @@ class App:
         self.lbl_qsum.pack(side="left", padx=10)
 
         self.btn_clearq = self._mk_btn(qhead, _t("g056"), self.clear_queue,
-                                       "#78909c", width=None)
+                                       PALETTE["gray_btn3"], width=None)
         self.btn_clearq.pack(side="right", padx=(4, 0))
         self.btn_rmsel = self._mk_btn(qhead, _t("g057"), self.remove_selected,
-                                      "#607d8b", width=None)
+                                      PALETTE["gray_btn"], width=None)
         self.btn_rmsel.pack(side="right", padx=(4, 0))
         tk.Label(qhead, text=_t("g058"), bg=C_BG, fg=C_SUB,
                  font=(FONT, 8)).pack(side="right", padx=(0, 6))
@@ -1290,7 +1560,7 @@ class App:
         self.btn_stop.config(state="disabled")
 
         self.btn_detail = self._mk_btn(inner, _t("g066"), self.show_result_detail,
-                                       "#546e7a", width=7, big=True)
+                                       PALETTE["gray_btn2"], width=7, big=True)
         self.btn_detail.pack(side="right", padx=(10, 0))
         self.btn_detail.config(state="disabled")
 
@@ -1402,9 +1672,10 @@ class App:
         self._seen = set((f["ip"], int(f.get("port") or L.TCP_PORT))
                          for f in found)
         for f in found:
-            self.peer_list.insert(
-                "end", "  %s  %s:%d" % (f.get("name", "?"), f["ip"],
-                                        int(f.get("port") or L.TCP_PORT)))
+            self._append_peer_row(
+                "  %s  %s:%d" % (f.get("name", "?"), f["ip"],
+                                 int(f.get("port") or L.TCP_PORT)))
+        self._add_phone_row()
         if peer[0]:
             for i, f in enumerate(found):
                 if f["ip"] == peer[0]:
@@ -1425,7 +1696,7 @@ class App:
                       relief="flat", cursor="hand2",
                       pady=7 if big else 5,
                       activebackground=color, activeforeground=C_WHITE,
-                      disabledforeground="#cfd8dc", **extra)
+                      disabledforeground=PALETTE["hover"], **extra)
         b.bind("<Enter>", lambda e, w=b, c=color: w.config(bg=self._darken(c)) if str(w["state"]) != "disabled" else None)
         b.bind("<Leave>", lambda e, w=b, c=color: w.config(bg=c) if str(w["state"]) != "disabled" else None)
         return b
@@ -1517,6 +1788,7 @@ class App:
         if not silent:
             self.btn_scan.config(text=_t("g078"), state="disabled")
             self.peer_list.delete(0, "end")
+            self._add_phone_row()
 
         def work():
             try:
@@ -1528,6 +1800,9 @@ class App:
 
     def on_peers(self, found):
         self.btn_scan.config(text=_t("g043"), state="normal")
+        # 整表重建，而不是往后追加：打开聊天窗时会静默扫一遍（scan_peers(silent=True)），
+        # 以前那次不清列表，同一台机器会被反复加进来，越开聊天窗列表越长。
+        self.peer_list.delete(0, "end")
         me = set(L.local_ips())
         # 回环 / 本机网卡地址都算自己（广播副本会带着 127.0.0.1 回来）
         shown = [f for f in found if not L.is_own_addr(f.get("ip"), me)]
@@ -1545,15 +1820,17 @@ class App:
                          for f in shown)
         if not shown:
             self.peer_list.insert("end", _t("g079"))
+            self._add_phone_row()
             self.clear_peer()
             # v1.7.7：文案改成「检查对端是否开着软件」，不再报本机地址数量
             # （那个数字用户用不上，还容易让人以为是 IP 配错了）
             self.lbl_status.config(text=_t("g080"))
             return
         for f in shown:
-            self.peer_list.insert(
-                "end", "  %s  %s:%d" % (f.get("name", "?"), f.get("ip"),
-                                        int(f.get("port") or L.TCP_PORT)))
+            self._append_peer_row(
+                "  %s  %s:%d" % (f.get("name", "?"), f.get("ip"),
+                                 int(f.get("port") or L.TCP_PORT)))
+        self._add_phone_row()
         self.peer_list.selection_set(0)
         self.on_pick_peer(None)
         self.lbl_status.config(text=_t("g081") % len(shown))
@@ -1612,7 +1889,8 @@ class App:
                 break
 
         self._found.append({"ip": ip, "port": port, "name": name})
-        self.peer_list.insert("end", "  %s  %s:%d" % (name, ip, port))
+        self._append_peer_row("  %s  %s:%d" % (name, ip, port))
+        self._add_phone_row()
 
         # 关键：以前这里判断 "没有 peer_ip 才自动选中"，结果配置里存着上次的
         # 对端地址，条件恒为假 —— 列表有设备但对端栏还是红色「未连接」，
@@ -1623,15 +1901,85 @@ class App:
                 and port == int(self.peer_port))
         if not sel or same:
             self.peer_list.selection_clear(0, "end")
-            self.peer_list.selection_set(self.peer_list.size() - 1)
+            self.peer_list.selection_set(len(self._found) - 1)
             self.on_pick_peer(None)
         self.lbl_status.config(text=_t("g083") % (name, ip))
+
+    # ------------------------------------------------------------ 设备列表里的「手机」
+
+    def _phone_row_text(self):
+        return _t("g530")
+
+    def _phone_row_at(self):
+        """设备列表里「手机」那一行的下标；没有就是 -1。"""
+        try:
+            want = self._phone_row_text()
+            for i, txt in enumerate(self.peer_list.get(0, "end")):
+                if txt == want:
+                    return i
+        except Exception:
+            pass
+        return -1
+
+    def _add_phone_row(self):
+        """
+        设备列表固定留一行「手机」，点它出二维码。
+
+        为什么要有这一行：手机没有常驻接收端口，也不发广播，所以「查找设备」
+        永远只能找到另一台电脑。用户看到的结论是「电脑端找不到手机」，
+        而真相是这张表里本来就不会有手机。既然他们第一时间看的是这里，
+        就把入口放在这里 —— 比在文档里解释一百遍有用。
+        """
+        try:
+            i = self._phone_row_at()
+            if i >= 0:
+                self.peer_list.delete(i)
+            self.peer_list.insert("end", self._phone_row_text())
+            self.peer_list.itemconfig("end", foreground=PALETTE["blue"])
+        except Exception:
+            pass
+
+    def _append_peer_row(self, row):
+        """
+        插到设备行的末尾、也就是「手机」那一行**前面**。
+
+        这张表的下标要跟 self._found 一一对应（点第 N 行取第 N 个设备），
+        手机行必须永远在最末，否则点一行会选到另一台的地址。
+        """
+        pi = self._phone_row_at()
+        if pi >= 0:
+            self.peer_list.insert(pi, row)
+        else:
+            self.peer_list.insert("end", row)
+
+    def _select_peer_row(self):
+        """把选中行还给当前对端，并且不触发回调（否则会重复写一次配置）。"""
+        try:
+            self.peer_list.unbind("<<ListboxSelect>>")
+            self.peer_list.selection_clear(0, "end")
+            for i, f in enumerate(getattr(self, "_found", [])):
+                if f.get("ip") == self.peer_ip:
+                    self.peer_list.selection_set(i)
+                    break
+        except Exception:
+            pass
+        finally:
+            self.peer_list.bind("<<ListboxSelect>>", self.on_pick_peer)
 
     def on_pick_peer(self, _evt):
         sel = self.peer_list.curselection()
         if not sel:
             return
         idx = sel[0]
+        if idx == self._phone_row_at():
+            # 点「手机」不是选对端：出二维码，顺带把道理讲清楚。
+            # 选中状态还给原来的对端，免得左栏看起来像「一台都没选」。
+            self._select_peer_row()
+            if HAS_WEB:
+                self.show_qr_share()
+            else:
+                self.lbl_status.config(text=_t("g531"))
+            return
         found = getattr(self, "_found", [])
         if idx < len(found):
             f = found[idx]
@@ -2055,7 +2403,7 @@ class App:
         def on_close():
             self._on_text_win_close()
 
-        self._mk_btn(bar, _t("g341"), fill_clip, "#607d8b",
+        self._mk_btn(bar, _t("g341"), fill_clip, PALETTE["gray_btn"],
                      width=None).pack(side="left")
         self._mk_btn(bar, _t("g327"), on_close, C_GRAY,
                      width=None).pack(side="right", padx=(6, 0))
@@ -2143,6 +2491,118 @@ class App:
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", on_close)
 
+    # ------------------------------------------------------------ 电脑 → 手机
+
+    def send_to_phone(self, folder=False):
+        """电脑 → 手机。
+
+        手机不是一个「设备」：它没有常驻的接收端口（那要把整套加密通道在
+        安卓上重写一遍），所以电脑没法像对另一台电脑那样直接推过去，
+        电脑的「重新查找设备」里也永远只有电脑。
+
+        这里走手机本来就有的那条网页通道：文件先进暂存区，
+        手机打开 App 就能看到「电脑发来的文件」，点一下下载。
+        对用户来说差别只是多一次点击，不用等协议栈移植。
+        """
+        if not HAS_WEB:
+            return
+        if self.web is None or not self.web.running:
+            self._start_web_silent()
+        if self.web is None:
+            messagebox.showerror(APP_NAME, _t("g510"), parent=self.root)
+            return
+
+        if folder:
+            p = filedialog.askdirectory(title=_t("g512"), parent=self.root)
+            if not p:
+                return
+            self._stage_to_phone([p])
+        else:
+            picked = filedialog.askopenfilenames(title=_t("g511"),
+                                                 parent=self.root)
+            if not picked:
+                return
+            self._stage_to_phone([p for p in picked if os.path.isfile(p)])
+
+    def _stage_to_phone(self, paths):
+        """把选中的东西放进 <接收目录>\\.phone，文件夹打包成 zip。"""
+        if not paths:
+            return
+        pdir = WEB.phone_dir(self.cfg["recv_root"])
+        try:
+            os.makedirs(pdir, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror(APP_NAME, str(e), parent=self.root)
+            return
+
+        self._sweep_phone_stage(pdir)
+
+        ok, total, bad = 0, 0, []
+        for p in paths:
+            try:
+                if os.path.isdir(p):
+                    # 打包就地落在暂存区里，返回的路径已经是最终位置
+                    name, src = self._zip_folder(p, pdir)
+                else:
+                    name = WEB.safe_name(os.path.basename(p))
+                    src = p
+                dst = os.path.join(pdir, name)
+                # 打包件 src 和 dst 是同一个路径，再做一次 copy 会白搬一遍，
+                # 而且随后的清理会把它删掉 —— 之前就是这么把 zip 弄丢的。
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    tmp = dst + ".l2ptmp"
+                    shutil.copyfile(src, tmp)
+                    os.replace(tmp, dst)
+                ok += 1
+                total += os.path.getsize(dst)
+            except Exception as e:
+                bad.append("%s：%s" % (os.path.basename(p), e))
+
+        if ok:
+            self.lbl_status.config(text=_t("g517") % (ok, L.human_size(total)))
+            messagebox.showinfo(APP_NAME, _t("g513") % (ok, L.human_size(total)),
+                                parent=self.root)
+        if bad:
+            messagebox.showwarning(APP_NAME, _t("g516") % "\n".join(bad[:8]),
+                                   parent=self.root)
+
+    def _zip_folder(self, folder, pdir):
+        """文件夹打包成 <名字>.zip，落在 pdir 里，返回 (文件名, 路径)。"""
+        base = WEB.safe_name(os.path.basename(folder.rstrip("\\/"))) or "folder"
+        name = base + ".zip"
+        dst = os.path.join(pdir, name)
+        n = 1
+        while os.path.exists(dst):
+            name = "%s(%d).zip" % (base, n)
+            dst = os.path.join(pdir, name)
+            n += 1
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+            for cur, _dirs, files in os.walk(folder):
+                for f in files:
+                    full = os.path.join(cur, f)
+                    rel = os.path.relpath(full, folder)
+                    try:
+                        z.write(full, os.path.join(base, rel))
+                    except Exception:
+                        pass            # 单个文件读不了（占用/权限）不该整包失败
+        return name, dst
+
+    def _sweep_phone_stage(self, pdir, days=7):
+        """暂存区只是副本，超过 7 天没被下载就清掉，免得越堆越大。"""
+        cutoff = time.time() - days * 86400
+        try:
+            for n in os.listdir(pdir):
+                if n.endswith(".l2ptmp"):
+                    continue
+                fp = os.path.join(pdir, n)
+                try:
+                    if os.path.isfile(fp) and os.path.getmtime(fp) < cutoff:
+                        os.remove(fp)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     # ------------------------------------------------------------ 手机网页端
 
     def show_qr_share(self):
@@ -2164,19 +2624,21 @@ class App:
             messagebox.showerror(APP_NAME, str(e), parent=self.root)
             return
 
-        if self.web is not None:
-            try:
-                self.web.stop()
-            except Exception:
-                pass
-            self.web = None
-
-        sv = WEB.WebShare(recv, port=port,
-                          log=lambda s: self.events.put(("log", s)))
-        if not sv.start():
-            messagebox.showerror(APP_NAME, _t("g365") % port, parent=self.root)
-            return
-        self.web = sv
+        sv = self.web
+        if sv is None or not sv.running or int(sv.port) != int(port):
+            # 端口变了才重建；否则复用正在跑的那个 —— 重启会让
+            # 正连着的手机掉线，重连还得重扫码，很烦
+            if sv is not None:
+                self._stop_web()
+            sv = WEB.WebShare(recv, port=port, token=L.web_token(self.key),
+                              log=lambda s: self.events.put(("log", s)))
+            if not sv.start():
+                messagebox.showerror(APP_NAME, _t("g365") % port, parent=self.root)
+                return
+            self.web = sv
+        # 广播里带上网页端口，安卓客户端才知道该连哪
+        if self.server is not None:
+            self.server.web_port = port
         url = sv.url()
 
         win = tk.Toplevel(self.root)
@@ -2220,7 +2682,7 @@ class App:
         def do_open():
             P.open_url(url)
 
-        self._mk_btn(bar, _t("g368"), do_open, "#607d8b",
+        self._mk_btn(bar, _t("g368"), do_open, PALETTE["gray_btn"],
                      width=None).pack(side="right", padx=(6, 0))
         self._mk_btn(bar, _t("g363"), do_copy, C_BLUE,
                      width=None).pack(side="right")
@@ -2231,18 +2693,31 @@ class App:
         win.protocol("WM_DELETE_WINDOW", self._close_qr)
 
     def _close_qr(self):
-        try:
-            if self.web is not None:
-                self.web.stop()
-        except Exception:
-            pass
-        self.web = None
+        """
+        关窗 ≠ 关服务。
+
+        手机端（网页或 APK）可能在用着这条通道，关个窗口就把它踢下线，
+        用户看到的是「刚才还能传，现在连不上了」。默认保留服务，
+        想彻底关掉在 config.json 里设 web_keep=false。
+        """
+        if not self.cfg.get("web_keep", True):
+            self._stop_web()
         try:
             if self._qr_win is not None:
                 self._qr_win.destroy()
         except Exception:
             pass
         self._qr_win = None
+
+    def _stop_web(self):
+        try:
+            if self.web is not None:
+                self.web.stop()
+        except Exception:
+            pass
+        self.web = None
+        if self.server is not None:
+            self.server.web_port = 0
 
     def _draw_qr(self, canvas, text, size=232):
         """
@@ -2272,7 +2747,7 @@ class App:
                 if v:
                     x0 = off + x * cell
                     canvas.create_rectangle(x0, y0, x0 + cell, y0 + cell,
-                                            outline="", fill="#1f2a23")
+                                            outline="", fill=PALETTE["text"])
         return True
 
     def mirror_dialog(self):
@@ -2331,7 +2806,7 @@ class App:
                 if not dst_var.get().strip():
                     dst_var.set(os.path.basename(d))
 
-        self._mk_btn(row1, _t("g038"), pick, "#607d8b",
+        self._mk_btn(row1, _t("g038"), pick, PALETTE["gray_btn"],
                      width=None).pack(side="left")
 
         row2 = tk.Frame(win, bg=C_BG)
@@ -2557,6 +3032,255 @@ class App:
             self.events.put(("mirror_done", (updated, skipped_n, need)))
         except Exception as e:
             self.events.put(("mirror_err", str(e)))
+
+    # -------------------------------------------------- 自动同步（v1.8.0）
+
+    def _sync_jobs(self):
+        """配置里的同步任务，过滤掉结构不对的（手改配置文件改坏了也不至于崩）。"""
+        js = self.cfg.get("sync_jobs") or []
+        return [j for j in js
+                if isinstance(j, dict) and j.get("id") and j.get("local")]
+
+    def _sync_client(self):
+        """同步引擎要一条自己的连接。单独开而不是借用主界面的，
+        是因为主界面那条随时可能被一次手动传输占着。
+
+        还没选对端时返回 None：引擎会安静跳过这一轮，不当成错误。
+        """
+        if not self.peer_ip:
+            return None
+        return L.LinkClient(self.peer_ip, self.peer_port, self.key,
+                            timeout=L.CONNECT_TIMEOUT).open()
+
+    def _start_sync(self):
+        if not HAS_SYNC or not self.cfg.get("sync_on", True):
+            return
+        try:
+            self.sync = SYNC.SyncEngine(self._sync_jobs, self._sync_client,
+                                        log=lambda s: None,
+                                        on_event=self._sync_event)
+            self.sync.start()
+        except Exception:
+            self.sync = None
+
+    def _sync_event(self, kind, data):
+        # 引擎在后台线程里跑，界面只能通过队列碰
+        self.events.put(("sync_" + kind, data))
+
+    def _sync_state_text(self, jid):
+        if not self.sync:
+            return _t("g490")
+        st, err, last = self.sync.job_state(jid)
+        if st == "error":
+            if err == "too-many":
+                return _t("g500") % SYNC.MAX_FILES
+            return _t("g492")
+        if st == "busy":
+            return _t("g491")
+        if last:
+            return _t("g493") % (last[1], L.human_size(last[2]))
+        return _t("g490")
+
+    def _sync_refresh(self):
+        """把表格按当前配置和引擎状态重画一遍。开了窗口才有意义。"""
+        if self._sync_win is None:
+            return
+        try:
+            if not self._sync_win.winfo_exists():
+                self._sync_win = None
+                return
+        except Exception:
+            self._sync_win = None
+            return
+        tv = getattr(self, "_sync_tv", None)
+        if tv is None:
+            return
+        jobs = self._sync_jobs()
+        alive = set()
+        for j in jobs:
+            jid = j["id"]
+            alive.add(jid)
+            vals = (j.get("local") or "", j.get("remote") or ".",
+                    self._sync_state_text(jid))
+            if jid in self._sync_rows:
+                tv.item(self._sync_rows[jid], values=vals)
+            else:
+                self._sync_rows[jid] = tv.insert("", "end", values=vals)
+        for jid in list(self._sync_rows):
+            if jid not in alive:
+                try:
+                    tv.delete(self._sync_rows.pop(jid))
+                except Exception:
+                    self._sync_rows.pop(jid, None)
+        lbl = getattr(self, "_sync_lbl", None)
+        if lbl is not None:
+            last = None
+            if self.sync:
+                for j in jobs:
+                    _st, _er, l = self.sync.job_state(j["id"])
+                    if l and (last is None or l[0] > last):
+                        last = l[0]
+            if last:
+                lbl.config(text=_t("g494") % time.strftime(
+                    "%H:%M:%S", time.localtime(last)))
+            elif jobs:
+                # 有任务但还一次没传过：别写「还没有同步任务」，那是没有任务时才该说的话
+                lbl.config(text=_t("g507"))
+            else:
+                lbl.config(text=_t("g495"))
+
+    def sync_dialog(self):
+        """
+        自动同步：盯着本机一个文件夹，有变化就推给对端。
+
+        和「文件夹镜像」的区别：镜像是点一次做一次的活，这个是常驻的。
+        语义只做加法 —— 本地删了，对端那份不会跟着没（理由见 link2pc_sync）。
+        """
+        if not HAS_SYNC:
+            messagebox.showinfo(APP_NAME, _t("g501"))
+            return
+        if self._sync_win is not None:
+            try:
+                self._sync_win.lift()
+                self._sync_win.focus_force()
+                return
+            except Exception:
+                self._sync_win = None
+
+        win = tk.Toplevel(self.root)
+        self._sync_win = win
+        win.title(_t("g480"))
+        win.configure(bg=C_BG)
+        place_on(win, self.root, 720, 470)
+        win.transient(self.root)
+
+        tk.Label(win, text=_t("g481"), bg=C_BG, fg=C_SUB, font=(FONT, 9),
+                 justify="left", anchor="w", wraplength=680).pack(
+            fill="x", padx=16, pady=(14, 8))
+
+        body = tk.Frame(win, bg=C_BG)
+        body.pack(fill="both", expand=True, padx=16)
+        cols = ("local", "remote", "state")
+        tv = ttk.Treeview(body, columns=cols, show="headings", height=8)
+        for c, h, w, a in (("local", _t("g482"), 330, "w"),
+                           ("remote", _t("g483"), 190, "w"),
+                           ("state", _t("g484"), 150, "w")):
+            tv.heading(c, text=h)
+            tv.column(c, width=w, anchor=a, stretch=(c == "local"))
+        sb = ttk.Scrollbar(body, orient="vertical", command=tv.yview)
+        tv.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tv.pack(side="left", fill="both", expand=True)
+        self._sync_tv = tv
+        self._sync_rows = {}
+
+        lbl = tk.Label(win, text="", bg=C_BG, fg=C_GRAY, font=(FONT, 8),
+                       anchor="w")
+        lbl.pack(fill="x", padx=16, pady=(6, 0))
+        self._sync_lbl = lbl
+
+        bar = tk.Frame(win, bg=C_BG)
+        bar.pack(fill="x", padx=16, pady=12)
+
+        def add_job():
+            d = filedialog.askdirectory(title=_t("g488"), parent=win)
+            if not d:
+                return
+            d = os.path.normpath(d)
+            default = os.path.basename(d.rstrip("\\/")) or "sync"
+            name = simpledialog.askstring(_t("g489"), _t("g503"),
+                                          initialvalue=default, parent=win)
+            if name is None:
+                return
+            name = (name or "").strip().strip("/\\") or default
+            for j in self._sync_jobs():
+                if os.path.normcase(j.get("local") or "") == os.path.normcase(d):
+                    messagebox.showinfo(APP_NAME, _t("g496"), parent=win)
+                    return
+            js = list(self.cfg.get("sync_jobs") or [])
+            js.append({"id": "%x" % int(time.time() * 1000),
+                       "local": d, "remote": name, "enabled": True})
+            self.cfg["sync_jobs"] = js
+            save_cfg(self.cfg)
+            self._sync_refresh()
+
+        def del_job():
+            sel = tv.selection()
+            if not sel:
+                return
+            jid = None
+            for k, item in self._sync_rows.items():
+                if item == sel[0]:
+                    jid = k
+                    break
+            if not jid:
+                return
+            self.cfg["sync_jobs"] = [j for j in (self.cfg.get("sync_jobs") or [])
+                                     if j.get("id") != jid]
+            save_cfg(self.cfg)
+            self._sync_refresh()
+
+        def sync_now():
+            if not self.sync:
+                messagebox.showinfo(APP_NAME, _t("g497"), parent=win)
+                return
+            threading.Thread(target=self.sync.tick, daemon=True,
+                             name="LanSplice-SyncNow").start()
+
+        self._mk_btn(bar, _t("g485"), add_job, C_GREEN,
+                     width=None).pack(side="left")
+        self._mk_btn(bar, _t("g486"), del_job, C_RED,
+                     width=None).pack(side="left", padx=(6, 0))
+        self._mk_btn(bar, _t("g487"), sync_now, C_BLUE,
+                     width=None).pack(side="left", padx=(6, 0))
+
+        on_var = tk.BooleanVar(value=bool(self.cfg.get("sync_on", True)))
+
+        def on_toggle():
+            self.cfg["sync_on"] = bool(on_var.get())
+            save_cfg(self.cfg)
+            if self.cfg["sync_on"]:
+                if self.sync is None:
+                    self._start_sync()
+                elif self.sync:
+                    self.sync.start()
+            else:
+                if self.sync:
+                    self.sync.stop()
+                lbl.config(text=_t("g499"))
+
+        tk.Checkbutton(bar, text=_t("g502"), variable=on_var,
+                       command=on_toggle, bg=C_BG, fg=C_TEXT,
+                       selectcolor=C_CARD, activebackground=C_BG,
+                       activeforeground=C_TEXT, font=(FONT, 9),
+                       bd=0, highlightthickness=0).pack(side="left", padx=(14, 0))
+
+        close_btn = self._mk_btn(bar, _t("g406"), None, PALETTE["gray_btn"], width=None)
+        close_btn.pack(side="right")
+
+        def on_close():
+            self._sync_win = None
+            self._sync_tv = None
+            self._sync_lbl = None
+            self._sync_rows = {}
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        close_btn.config(command=on_close)
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        win.bind("<Escape>", lambda e: on_close())
+
+        self._sync_refresh()
+        self.root.after(700, self._sync_tick_ui)
+
+    def _sync_tick_ui(self):
+        """窗口开着的时候每秒刷新一次状态列。关掉就停，不白烧 CPU。"""
+        if self._sync_win is None:
+            return
+        self._sync_refresh()
+        self.root.after(1000, self._sync_tick_ui)
 
     def pick_files(self):
         ps = filedialog.askopenfilenames(title=_t("g101"), parent=self.root)
@@ -3028,7 +3752,7 @@ class App:
         btn_box = tk.Frame(bar, bg=C_BG)
         btn_box.pack(fill="x", padx=12)
 
-        txt = tk.Text(win, wrap="none", bg="#fbfcfd", fg=C_TEXT,
+        txt = tk.Text(win, wrap="none", bg=PALETTE["textbg"], fg=C_TEXT,
                       font=(FONT, 9), relief="flat", padx=12, pady=10)
         sb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
         txt.configure(yscrollcommand=sb.set)
@@ -3042,9 +3766,9 @@ class App:
             self.root.clipboard_append(text)
             self.lbl_status.config(text=_t("g141"))
 
-        btn_close = self._mk_btn(btn_box, _t("g142"), win.destroy, "#78909c", width=8)
+        btn_close = self._mk_btn(btn_box, _t("g142"), win.destroy, PALETTE["gray_btn3"], width=8)
         btn_close.pack(side="right")
-        self._mk_btn(btn_box, _t("g143"), copy_all, "#546e7a", width=10).pack(
+        self._mk_btn(btn_box, _t("g143"), copy_all, PALETTE["gray_btn2"], width=10).pack(
             side="left")
         if r.get("root"):
             self._mk_btn(btn_box, _t("g144"),
@@ -3202,7 +3926,7 @@ class App:
 
         bar = tk.Frame(win, bg=C_BG)
         bar.pack(fill="x", padx=14, pady=(0, 12))
-        self._mk_btn(bar, _t("g408"), show_detail, "#455a64",
+        self._mk_btn(bar, _t("g408"), show_detail, PALETTE["gray_btn4"],
                      width=None).pack(side="left")
         self._mk_btn(bar, _t("g403"), do_resend, C_BLUE,
                      width=None).pack(side="left", padx=6)
@@ -3538,8 +4262,37 @@ class App:
             notify=lambda k, d: self.events.put(("recv", (k, d))),
             allow_discovery=bool(self.cfg.get("discovery", True)),
         )
+        if self.web is not None:
+            self.server.web_port = self.web.port
         self.server.start_server()
         self.root.after(500, lambda: self._after_server(retry))
+        self.root.after(900, self._start_web_silent)
+
+    def _start_web_silent(self):
+        """手机接入：主程序启动时默默把网页服务开好。
+
+        APK 要靠它随时能推文件（分享菜单是常驻入口，不是「先开窗口再用」）。
+        端口被占之类的失败只写日志，不弹框 —— 用户不开手机功能时不该被打扰。
+        """
+        if not HAS_WEB or self.web is not None or self._quitting:
+            return
+        if not self.cfg.get("web_keep", True):
+            return
+        port = int(self.cfg.get("web_port") or WEB.WEB_PORT)
+        try:
+            os.makedirs(self.cfg["recv_root"], exist_ok=True)
+            sv = WEB.WebShare(self.cfg["recv_root"], port=port,
+                              token=L.web_token(self.key),
+                              log=lambda s: self.events.put(("log", s)))
+            if not sv.start():
+                self.events.put(("log", _t("g509") % (port, sv.error)))
+                return
+            self.web = sv
+            if self.server is not None:
+                self.server.web_port = port
+            self.events.put(("log", _t("g508") % port))
+        except Exception as e:
+            self.events.put(("log", _t("g509") % (port, e)))
 
     def _after_server(self, retry=0):
         s = self.server
@@ -4183,7 +4936,7 @@ class App:
                 self.lbl_status.config(text=_t("g141"))
 
         if copyable:
-            self._mk_btn(bar, _t("g143"), copy_all, "#546e7a",
+            self._mk_btn(bar, _t("g143"), copy_all, PALETTE["gray_btn2"],
                          width=None).pack(side="left")
         if extra:
             label, cb, color = extra
@@ -4268,7 +5021,31 @@ class App:
         finally:
             self.root.after(60, self._pump)
 
+    def _on_sync_event(self, kind, data):
+        """
+        同步引擎的事件。只做两件事：底部一句话、表格里的状态列跟着变。
+
+        不弹气泡：同步是常态，用户正在改文件时它一分钟能报十次，
+        每次都弹等于骚扰。要细节就开窗口看。
+        """
+        if kind == "file":
+            return                     # 每个文件都刷一遍表格，多了会闪
+        if kind == "done":
+            _jid, n, sent = data
+            if n:
+                self.lbl_status.config(text=_t("g505") % (n, L.human_size(sent)))
+        elif kind == "error":
+            _jid, msg = data
+            self.lbl_status.config(text=_t("g506") % str(msg)[:50])
+        elif kind == "truncated":
+            _jid, limit = data
+            self.lbl_status.config(text=_t("g500") % limit)
+        self._sync_refresh()
+
     def _handle(self, kind, data):
+        if kind.startswith("sync_"):
+            self._on_sync_event(kind[5:], data)
+            return
         if kind == "diag":
             self._show_diag(data)
         elif kind == "peers":
@@ -4687,7 +5464,7 @@ class App:
 
         self._mk_btn(bar, _t("g327"), win.destroy, C_GRAY,
                      width=None).pack(side="right", padx=(8, 0))
-        self._mk_btn(bar, _t("g453"), lambda: pick("quit"), "#b0413e",
+        self._mk_btn(bar, _t("g453"), lambda: pick("quit"), PALETTE["err2"],
                      width=None).pack(side="right", padx=(8, 0))
         self._mk_btn(bar, _t("g452"), lambda: pick("tray"), C_BLUE,
                      width=None).pack(side="right")
@@ -4717,6 +5494,7 @@ class App:
             self._close_qr()
         except Exception:
             pass
+        self._stop_web()          # 退出时一定要收掉，别留着端口
         try:
             if self.tray:
                 self.tray.stop()
