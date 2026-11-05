@@ -323,12 +323,12 @@ S = {
         'Searching…',
     ),
     "g079": (
-        '（没找到，点「手动填写对端地址」）',
-        "(not found — enter peer code)",
+        '（没找到电脑，点下面「手动填写对端地址」）',
+        "(no PC found — enter the peer address below)",
     ),
     "g080": (
-        '没有找到设备，检查对端机器是否已经打开软件',
-        'No devices found — check the peer has the app open',
+        '没有找到电脑：检查对端软件开了没；手机请点列表里的「手机」',
+        'No PC found — check the peer has the app open; for a phone use "Phone" below',
     ),
     "g081": (
         '找到 %d 台设备',
@@ -2035,6 +2035,188 @@ S = {
     "g479": (
         "还没授权，防火墙没改。想放行随时点「一键放行」。",
         "Not authorised — the firewall is unchanged. Click Allow in firewall when ready.",
+    ),
+    # ---- v1.8 目录自动同步
+    "g480": (
+        "自动同步…",
+        "Auto-sync…",
+    ),
+    "g481": (
+        "盯住本机一个文件夹，有变化就推给对端。只做加法：本地删掉的文件，"
+        "对端那份不会被删；同一个文件改过会覆盖对端的旧版本。关掉窗口不影响同步。",
+        "Watches a local folder and pushes changes to the peer. Add-only: files you "
+        "delete locally stay on the peer. An edited file replaces the peer's old copy. "
+        "Closing this window does not stop syncing.",
+    ),
+    "g482": (
+        "本地文件夹",
+        "Local folder",
+    ),
+    "g483": (
+        "对端目录",
+        "On the peer",
+    ),
+    "g484": (
+        "状态",
+        "Status",
+    ),
+    "g485": (
+        "添加…",
+        "Add…",
+    ),
+    "g486": (
+        "移除",
+        "Remove",
+    ),
+    "g487": (
+        "立即同步一次",
+        "Sync now",
+    ),
+    "g488": (
+        "选择要同步的本地文件夹",
+        "Choose the local folder to sync",
+    ),
+    "g489": (
+        "对端目录名",
+        "Folder name on the peer",
+    ),
+    "g490": (
+        "空闲",
+        "Idle",
+    ),
+    "g491": (
+        "同步中",
+        "Syncing",
+    ),
+    "g492": (
+        "失败",
+        "Failed",
+    ),
+    "g493": (
+        "已同步 %d 个（%s）",
+        "Synced %d (%s)",
+    ),
+    "g494": (
+        "上次同步：%s",
+        "Last sync: %s",
+    ),
+    "g495": (
+        "还没有同步任务。点「添加…」选一个文件夹。",
+        "No sync jobs yet. Click Add… and pick a folder.",
+    ),
+    "g496": (
+        "这个文件夹已经在列表里了。",
+        "That folder is already in the list.",
+    ),
+    "g497": (
+        "自动同步当前是关着的，先在下面勾上「开着程序就同步」。",
+        "Auto-sync is off. Tick “Sync while running” below first.",
+    ),
+    "g498": (
+        "还没选对端。先在左边列表里选一台设备。",
+        "No peer selected. Pick a device on the left first.",
+    ),
+    "g499": (
+        "自动同步已暂停，勾上开关继续。",
+        "Auto-sync paused. Tick the switch to resume.",
+    ),
+    "g500": (
+        "文件太多（超过 %d 个），这个任务暂停了。",
+        "Too many files (over %d) — this job is paused.",
+    ),
+    "g501": (
+        "这个版本没有带自动同步模块。",
+        "This build does not include the auto-sync module.",
+    ),
+    "g502": (
+        "开着程序就同步",
+        "Sync while running",
+    ),
+    "g503": (
+        "对端接收目录下的子目录名，留空就用文件夹名。",
+        "Subfolder under the peer's receive folder. Empty = same name as the local folder.",
+    ),
+    "g505": (
+        "自动同步：推送了 %d 个文件（%s）",
+        "Auto-sync: pushed %d file(s) (%s)",
+    ),
+    "g506": (
+        "自动同步出错：%s",
+        "Auto-sync error: %s",
+    ),
+    "g507": (
+        "等待变化。改动的文件会在十几秒内推到对端。",
+        "Waiting for changes. Edits are pushed within a few seconds.",
+    ),
+    "g508": (
+        "手机接入已开启（端口 %d），安卓客户端和网页都能随时连。",
+        "Phone access is on (port %d) — the Android app and the web page can connect any time.",
+    ),
+    "g509": (
+        "手机接入没开起来（端口 %d）：%s。二维码照常可用，只是手机连不上。",
+        "Phone access could not start (port %d): %s. The QR code still works, but phones cannot connect.",
+    ),
+    # ---- v1.9 电脑 → 手机
+    "g510": (
+        "手机接入没开起来，文件没地方放。先在「文件 → 手机传文件」里把它打开。",
+        "Phone access is not running, so there is nowhere to put the file. "
+        "Open File → Send to phone first.",
+    ),
+    "g511": (
+        "选择要发到手机的文件（可多选）",
+        "Choose files to send to the phone (multiple allowed)",
+    ),
+    "g511a": (
+        "发文件到手机…",
+        "Send files to phone…",
+    ),
+    "g512": (
+        "选择要发到手机的文件夹（会打包成一个 zip）",
+        "Choose a folder to send (it will be zipped)",
+    ),
+    "g512a": (
+        "发文件夹到手机…",
+        "Send folder to phone…",
+    ),
+    "g513": (
+        "已放好 %d 个文件（%s）。\n\n"
+        "手机上打开 LanSplice，页面最上方「电脑发来的文件」里点「下载」即可。\n"
+        "没看到就下拉刷新一下 —— 页面每 5 秒自己也会刷。",
+        "%d file(s) staged (%s).\n\n"
+        "Open LanSplice on the phone and tap Download under "
+        "\"Files from your PC\" at the top of the page.\n"
+        "If it is not there yet, pull to refresh — the page also polls every 5 seconds.",
+    ),
+    "g516": (
+        "有几个没放进去：\n%s",
+        "Some files could not be staged:\n%s",
+    ),
+    "g517": (
+        "已放到手机收件：%d 个（%s），手机上点下载即可",
+        "Staged for the phone: %d file(s) (%s) — tap Download on the phone",
+    ),
+    # ---- v1.9 深色主题
+    "g520": (
+        "浅色主题",
+        "Light theme",
+    ),
+    "g521": (
+        "深色主题",
+        "Dark theme",
+    ),
+    "g522": (
+        "跟随系统",
+        "Follow system",
+    ),
+    # ---- v1.9.2 设备列表里的「手机」入口
+    "g530": (
+        '手机 · 扫码或用 App 连接',
+        'Phone · scan QR or use the app',
+    ),
+    "g531": (
+        '手机不广播、也不开接收端口，所以「查找设备」里没有它；扫码就能连上',
+        'Phones do not broadcast and open no port, so "Find devices" never lists one — '
+        'scan the QR code instead',
     ),
     # ---- v1.5 命令行
     "cli01": (
