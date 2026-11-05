@@ -539,6 +539,8 @@ independent of this project's MIT terms.
 - Fixed an old bug along the way: opening the chat window quietly re-scanned the LAN, and
   that pass appended to the list without clearing it, so every device was added again each
   time. The list is now rebuilt on every scan.
+- **Phone transfers verified both ways on a real device**: share from the gallery to the PC,
+  and send from the PC to the phone — files match on both ends.
 
 **v1.9.1** — an Android client: a 53 KB APK, share from the gallery and it lands on the PC
 - **Android app** (`LanSplice-1.9.1.apk`, 53 KB, 29 classes, no third-party libraries). It finds
