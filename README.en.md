@@ -20,8 +20,17 @@ overwritten. Closing the window only minimises to the tray — receiving keeps r
 
 ![Screenshot](docs/screenshot-en.png)
 
+A dark theme is included (Tools → Theme: Light / Dark / Follow system) — on the desktop app,
+the phone web page and the Android client alike, and switching never interrupts a transfer:
+
+![Dark theme](docs/theme_dark.png)
+
 **[⬇ Download LanSplice.exe](https://github.com/podcatcher962/LanSplice/releases/latest)** —
 one 13 MB file, no installer, runs on both 32-bit and 64-bit Windows.
+
+Want to receive on a phone too? Install the **53 KB Android app** — `LanSplice-1.9.2.apk`
+(same download page). No cable, no cloud drive: tap Share on a photo, pick it, and the photo
+lands straight in the receive folder on your PC.
 
 Author: © Lanlan Eternal (永远的兰兰)
 
@@ -39,7 +48,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
 | macOS (Intel / Apple Silicon) | ⚠️ Native build available, **but not verified on a real Mac yet**: run from source, or build a `.app` with `build_macos.sh`; see [docs/macos.md](docs/macos.md) (no Mac? use browser mode: [docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v1.7.8.exe`.**
+**One file, no decision to make: `LanSplice-v1.9.2.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -176,6 +185,29 @@ the peer.
 
 ---
 
+## Auto-sync
+
+A mirror is a one-off job. If you want a folder to keep following you, use
+**Tools → Auto-sync…**:
+
+1. Click Add…, pick a local folder, then type the subfolder name under the peer's receive folder
+   (leave it empty to reuse the folder name).
+2. Leave the program running. That is all.
+
+Same add-only rule as the mirror, plus two more:
+
+- Files you delete locally are **kept on the peer**. Deletion is irreversible, and an extra copy
+  is almost never a bad thing
+- Files still being written are **not sent**. A file must look identical across two consecutive
+  scans (6 seconds apart) before anything moves — so a file you just saved arrives a few seconds
+  later, and you never get half a file
+
+The status column reads "Synced 12 (3.4 MB)". Closing the window does not stop syncing; untick
+"Sync while running" to stop. With no peer selected the job stays quiet instead of filling the
+status bar with errors.
+
+---
+
 ## Command line
 
 The same exe also takes plain commands, which is handy in batch files, scheduled tasks, or when
@@ -248,7 +280,7 @@ UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium /
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
-Download **[LanSplice-1.7.8-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.8-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
+Download **[LanSplice-1.9.2-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.9.2-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
 
 ```sh
 sudo sh install.sh
@@ -495,6 +527,65 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v1.9.2** — the device list now has a "Phone" row; click it to scan a code
+- **Why the phone was never found**: a phone is not a peer the way a PC is — it neither
+  broadcasts nor listens on a port. It only shows up once you scan the code (browser) or
+  install the APK. So "Find devices" will always list just the other PC. That explanation
+  used to live only in the docs; now the last row of the list is **Phone · scan QR or use
+  the app**, and clicking it opens the QR code directly.
+- **Clearer empty state**: instead of only "check the peer has the app open", it now says
+  outright that phones never appear there.
+- Fixed an old bug along the way: opening the chat window quietly re-scanned the LAN, and
+  that pass appended to the list without clearing it, so every device was added again each
+  time. The list is now rebuilt on every scan.
+
+**v1.9.1** — an Android client: a 53 KB APK, share from the gallery and it lands on the PC
+- **Android app** (`LanSplice-1.9.1.apk`, 53 KB, 29 classes, no third-party libraries). It finds
+  the PC on the same router automatically and remembers the pairing code you type once. After
+  that, "Share → LanSplice" from the gallery or any file manager pushes straight to the PC —
+  the desktop window does not have to be open first.
+- **The pairing code is the key**: the web token is now derived from it (HMAC-SHA256), so the
+  phone can connect after copying the code once, with no QR scan. The token plays no part in the
+  encrypted 47820 channel — leaking it cannot open file transfer.
+- **Phone access is always on**: the desktop opens port 47822 as soon as it starts, no more
+  clicking "Tools → Send to phone". Set `web_keep: false` in `config.json` to turn it off.
+- **PC → phone**: "File → Send files to phone…" stages files for the phone (a chosen folder is
+  zipped automatically). Open the app and tap Download under "Files from your PC" at the top;
+  the file lands in the phone's Downloads. The phone is not a *device* — it has no always-on
+  receive port, so "Find devices again" on the desktop will only ever list PCs. This path uses
+  the phone's existing web service; staged files in `<receive folder>\.phone` are swept after
+  7 days.
+- **Pick where files land on the phone**: "Files from the PC are saved to" in Settings accepts
+  any folder (SD card, Pictures, even a WeChat folder). It goes through the system folder picker,
+  so no storage permission is requested, and the choice survives a restart. If the folder is
+  deleted or the grant is revoked, downloads fall back to the system Downloads folder instead of
+  stalling on a location it cannot write to.
+- **Dark mode on all three ends**: desktop "Tools → Theme" (Light / Dark / Follow system — colours
+  are swapped in place, so an in-flight transfer is not interrupted); the phone web page follows
+  the system and also honours `?dark=1/0` sent by the app; the Android app has the same three
+  options and does not drop you back to the pairing screen when you switch. Status bar, title bar,
+  menus and scrollbars all change together, with no white strips left behind.
+- **Failures explain themselves**: a wrong code says the code does not match, and a failed
+  connection lists the three usual causes instead of the browser's "site cannot be reached".
+- The code field accepts only A-Z and 2-9, forces upper case and disables keyboard suggestions —
+  a Chinese IME otherwise inserts characters and the 16 digits never add up.
+
+**v1.8.0** — folders can now sync themselves, no more clicking a mirror each time
+- **New: Tools → Auto-sync…** Pick a local folder and a subfolder under the peer's receive
+  folder; while the program runs, changes are pushed continuously. A mirror is a one-off job,
+  this one stays on.
+- **Three rules**: add-only (files deleted locally are kept on the peer); files still being
+  written are not sent (identical across two scans before anything moves, so no half files);
+  edits overwrite under the same name (no `(2)`/`(3)` pile-up).
+- **Visible state**: the list shows "Synced N (size)" and the last sync time. Closing the window
+  does not stop it; untick "Sync while running" to stop.
+- **Does not compete with manual transfers**: the engine runs on its own thread with its own
+  connection, and stays quiet when no peer is selected instead of filling the status bar with
+  errors.
+- 34 new tests: 25 unit (temp files skipped, diffing, two-scan stability, add-only, error
+  recovery) and 9 end-to-end against a real receiver (landing, subfolders, overwrite, deletion
+  left alone).
 
 **v1.7.8** — a drive root (`E:\`) as the receive folder rejected every file
 - The error said "path escapes the receive folder: 夜无疆.txt" and not a byte was written.
