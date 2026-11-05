@@ -60,7 +60,7 @@ MAGIC = b"L2P1"
 # 版本号只在这里写一次。
 # 以前图形界面和命令行各写一份，升级时忘了改其中一处，
 # 就会出现「窗口标题 1.5.0、命令行 version 1.4.0」这种自相矛盾。
-APP_VER = "1.7.8"
+APP_VER = "1.9.2"
 
 DISCOVERY_PORT = 47821
 ANNOUNCE_EVERY = 8             # 秒。接收端隔这么久主动宣告一次自己
@@ -465,6 +465,23 @@ def key_to_code(key):
     return "-".join("".join(out)[i:i + 4] for i in range(0, 16, 4))
 
 
+WEB_TOKEN_INFO = b"LANSPLICE-WEB-TOKEN"
+
+
+def web_token(psk):
+    """
+    网页服务的访问令牌，由配对密钥派生，不再随机生成。
+
+    为什么改：安卓客户端只知道 16 位配对码，拿不到扫码里的随机 token，
+    每次都要先扫一次码，等于白装一个 App。派生之后手机输入配对码
+    就能算出同一个值。
+
+    强度：80 位密钥经 HMAC-SHA256 派生出 96 位令牌，局域网内猜不到；
+    而且它不参与握手，泄漏了也打不开 47820 那条加密通道。
+    """
+    return hmac.new(psk, WEB_TOKEN_INFO, hashlib.sha256).hexdigest()[:24]
+
+
 def code_to_key(code):
     """配对码 -> 10 字节。容忍空格、横线、小写。"""
     clean = "".join(ch for ch in code.upper() if ch in _ALPHABET)
@@ -845,6 +862,10 @@ class PeerServer(threading.Thread):
         self.log = log or (lambda s: None)
         self.notify = notify or (lambda kind, data: None)
         self.allow_discovery = allow_discovery
+        # 手机网页服务的端口。0 表示没开。
+        # 放进局域网广播里，安卓客户端才知道该连哪个端口（默认 47890，
+        # 但用户改过端口时只能靠这个字段）。
+        self.web_port = 0
         # 本实例的身份证：宣告里带上，收到就认得「这是我自己发的」。
         # 光比 IP 不够（多网卡、回环、NAT 会让自己的包换个源地址回来）。
         self.inst = secrets.token_hex(8)
@@ -1009,6 +1030,9 @@ class PeerServer(threading.Thread):
             "port": self.port,
             "ip": ip or local_ip(),
             "inst": self.inst,
+            # 手机网页服务端口（0 = 没开）。不是秘密，本来就是给客户端导路用的；
+            # 访问令牌不在这里，它由配对码派生，不会随广播泄漏。
+            "web": int(self.web_port or 0),
         }).encode("utf-8"))
 
     def _send_offer(self, sock, addr):
