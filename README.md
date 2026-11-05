@@ -34,7 +34,7 @@
 | 飞腾 / 鲲鹏 / 龙芯 | ⚠️ 协议与架构无关，但**尚未在真机上验证** |
 | macOS（Intel / Apple Silicon） | ⚠️ 有原生版，**但未在真机 Mac 上验证**：源码可直接跑，也可用 `build_macos.sh` 打成 `.app`；见 [docs/macos.md](docs/macos.md)（还没 Mac？用浏览器方式：[docs/mac-now.md](docs/mac-now.md)） |
 
-**Windows 只有一个文件，不用挑：`LanSplice-v1.7.7.exe`。**
+**Windows 只有一个文件，不用挑：`LanSplice-v1.7.8.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
@@ -234,7 +234,7 @@ LanSplice.exe version
 飞腾 / 鲲鹏（ARM64）、海光 / 兆芯（x86_64）、龙芯（LoongArch）之间照样互通 ——
 协议是字节级的，跟 CPU 架构无关。
 
-下载 **[LanSplice-1.7.7-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.7-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
+下载 **[LanSplice-1.7.8-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-1.7.8-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
 
 ```sh
 sudo sh install.sh
@@ -529,6 +529,18 @@ pyinstaller -F -w --name LanSplice \
 ---
 
 ## 更新记录
+
+**v1.7.8** — 接收目录设成盘根（`E:\`）时，什么文件都传不进去
+- 报错写着「路径越界：夜无疆.txt」，其实一个字节都没写出去。原因是校验时把
+  接收目录补上分隔符再比前缀，而 `E:\` 本来就以 `\` 结尾，补完变成 `E:\\`，
+  于是 `E:\夜无疆.txt` 永远不以它开头。设成子目录（`E:\下载`）一切正常，
+  所以这个问题一直藏着。Linux 的 `/` 是同一个毛病，一起修了。
+- 越界防护没有放松：`..`、别的盘符、Windows 保留设备名照旧拦。
+- 加了 4 项回归测试：盘根放行文件、放行子目录、仍拒 `..`、仍拒他盘路径。
+- **顺带修掉同一场景下的「启动后半天没反应」**：原来启动时要递归遍历整个接收目录，
+  找残留分片（`.l2p-parts`）删掉。目录是 `E:\` 时这等于扫整块盘，盘越大等越久，
+  期间不接任何连接。现在这项清理挪到后台线程，并给目录数（2 万）和时间（3 秒）
+  封顶，超了就先干活、下次启动接着清。
 
 **v1.7.7** — 把「门面」收干净：11 个弹窗全部居中，诊断报告能复制
 - **弹窗窜到左上角**：11 个 Toplevel 里只有 3 个设了坐标，其余 8 个只给尺寸不给位置，
