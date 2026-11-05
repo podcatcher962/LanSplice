@@ -55,15 +55,40 @@ def safe_name(name):
     return name
 
 
+# 电脑 → 手机的暂存目录。放在接收目录下面，但以点开头，
+# 所以不会被「电脑上的文件」那份列表扫出来 —— 那列表是给对端看接收成果的，
+# 不该混进「我准备发给手机」的东西。
+PHONE_DIR = ".phone"
+
+
+def phone_dir(root):
+    return os.path.join(root, PHONE_DIR)
+
+
+
 PAGE = """<!doctype html>
 <html lang="zh"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="light dark">
 <title>LanSplice · 手机传文件</title>
 <style>
+  /* 两套变量：默认浅色；系统偏好深色就换一套；页面带 ?dark=1 时强制深色
+     （安卓客户端就是这么传的 —— 它有自己的主题开关，不该被系统设置覆盖）。 */
   :root{--bg:#eceff1;--card:#fff;--line:#d5dde2;--text:#1f2a30;--sub:#5f7079;
-        --green:#2e7d32;--blue:#1976d2;--purple:#6a1b9a}
+        --green:#2e7d32;--blue:#1976d2;--purple:#6a1b9a;--gray:#607d8b;
+        --btn2:#e8f1fb;--drop:#f7f2fb;--trough:#e3e9ec;--inbox:#e8f5e9;
+        --inbox_line:#c8e6c9;--err:#c62828}
+  @media (prefers-color-scheme: dark){
+    :root:not(.light){--bg:#14191c;--card:#1d2529;--line:#33403e;--text:#e6ecef;
+      --sub:#9fb0b8;--green:#66bb6a;--blue:#64b5f6;--purple:#8e5cd0;--gray:#4e5f6b;
+      --btn2:#243038;--drop:#241f2b;--trough:#2a343a;--inbox:#1e2b22;
+      --inbox_line:#2f4434;--err:#ef9a9a}
+  }
+  :root.dark{--bg:#14191c;--card:#1d2529;--line:#33403e;--text:#e6ecef;
+    --sub:#9fb0b8;--green:#66bb6a;--blue:#64b5f6;--purple:#8e5cd0;--gray:#4e5f6b;
+    --btn2:#243038;--drop:#241f2b;--trough:#2a343a;--inbox:#1e2b22;
+    --inbox_line:#2f4434;--err:#ef9a9a}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   /* 手机屏以「臂长距离」看，字要比桌面大一档：正文 19px、次要 15px。
      viewport 里不写最大缩放倍数 —— 写了就没法双指放大，是拿无障碍换整齐。 */
@@ -79,15 +104,15 @@ PAGE = """<!doctype html>
          color:#fff;background:var(--purple);width:100%;font-weight:600;
          min-height:56px}
   button:active{opacity:.85}
-  button.gray{background:#607d8b;margin-top:10px}
+  button.gray{background:var(--gray);margin-top:10px}
   #drop{border:2px dashed var(--line);border-radius:12px;padding:30px 12px;
         text-align:center;color:var(--sub);font-size:16px;margin-top:12px}
-  #drop.hot{border-color:var(--purple);color:var(--purple);background:#f7f2fb}
+  #drop.hot{border-color:var(--purple);color:var(--purple);background:var(--drop)}
   /* 一行放不下「长文件名 + 大小 + 下载」：文件名独占第一行（最多两行），
      大小和下载排在第二行。字放大之后尤其需要这样，否则名字只剩七八个字。 */
   .item{display:grid;grid-template-columns:1fr auto;align-items:center;
         column-gap:12px;row-gap:4px;padding:13px 0;
-        border-bottom:1px solid #eef2f4;font-size:17px}
+        border-bottom:1px solid var(--line);font-size:17px}
   .item:last-child{border-bottom:0}
   .item .n{grid-column:1/-1;min-width:0;overflow-wrap:anywhere;
            display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
@@ -97,13 +122,14 @@ PAGE = """<!doctype html>
   .item a{grid-column:2;grid-row:2;color:var(--blue);text-decoration:none;
           font-size:16px;display:inline-flex;align-items:center;
           justify-content:center;min-height:44px;padding:0 14px;
-          border-radius:10px;background:#e8f1fb}
+          border-radius:10px;background:var(--btn2)}
+  #inboxCard{background:var(--inbox);border-color:var(--inbox_line)}
   .task{margin-top:12px;font-size:16px}
-  .task .bar{height:8px;background:#e3e9ec;border-radius:4px;overflow:hidden;
+  .task .bar{height:8px;background:var(--trough);border-radius:4px;overflow:hidden;
              margin-top:6px}
   .task .bar i{display:block;height:100%;width:0;background:var(--green);
                transition:width .2s}
-  .err{color:#c62828}
+  .err{color:var(--err)}
   /* 极窄屏（老机型 320~360）再收一点，避免「选择文件发送」被挤断行 */
   @media (max-width:360px){
     body{font-size:18px;padding:16px 12px 40px}
@@ -114,6 +140,12 @@ PAGE = """<!doctype html>
 <body>
 <h1>LanSplice</h1>
 <p class="sub">手机 ↔ 电脑 · 同一个路由器 · 不经过任何服务器</p>
+
+<!-- 电脑上点了「发到手机」才会出现，平时不占位置 -->
+<div class="card" id="inboxCard" style="display:none">
+  <h2>电脑发来的文件</h2>
+  <div id="inbox"></div>
+</div>
 
 <div class="card">
   <h2>发到电脑（接收目录）</h2>
@@ -132,6 +164,8 @@ PAGE = """<!doctype html>
 <script>
 var TOKEN = "__TOKEN__";
 var qs = new URLSearchParams(location.search);
+if (qs.get("dark") === "1") { document.documentElement.classList.add("dark"); }
+if (qs.get("dark") === "0") { document.documentElement.classList.add("light"); }
 if (qs.get("t")) { TOKEN = qs.get("t"); sessionStorage.setItem("ls_t", TOKEN); }
 else if (sessionStorage.getItem("ls_t")) { TOKEN = sessionStorage.getItem("ls_t"); }
 
@@ -228,6 +262,40 @@ function loadFiles(){
 }
 document.getElementById("reload").onclick = loadFiles;
 loadFiles();
+
+/* 电脑 → 手机：电脑上点了「发到手机」才有内容。
+   轮询而不是长连接，是因为这条通道本来就只是本机 HTTP，
+   5 秒一次的开销远比维持一个 WebSocket 小。 */
+function loadInbox(){
+  var card = document.getElementById("inboxCard");
+  var box = document.getElementById("inbox");
+  if (!card || !box) return;
+  fetch(api("/api/phone")).then(function(r){ return r.json(); }).then(function(js){
+    if (!js.ok || !js.items || !js.items.length){ card.style.display = "none"; return; }
+    card.style.display = "";
+    box.innerHTML = "";
+    js.items.forEach(function(it){
+      var row = document.createElement("div");
+      row.className = "item";
+      var n = document.createElement("div");
+      n.className = "n";
+      n.textContent = it.name;
+      var s = document.createElement("div");
+      s.className = "s";
+      s.textContent = fmt(it.size);
+      var a = document.createElement("a");
+      a.href = api("/phone/dl?name=" + encodeURIComponent(it.name));
+      a.textContent = "下载";
+      row.appendChild(n); row.appendChild(s); row.appendChild(a);
+      box.appendChild(row);
+    });
+  }).catch(function(){});
+}
+loadInbox();
+setInterval(loadInbox, 5000);
+document.addEventListener("visibilitychange", function(){
+  if (!document.hidden) loadInbox();
+});
 </script>
 </body></html>
 """
@@ -239,6 +307,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     # 交给 WebShare 填
     root_dir = ""
+    phone_dir = ""
     token = ""
 
     def log_message(self, fmt, *a):
@@ -307,31 +376,52 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._token_ok(q):
                 self._send(401, "口令不对")
                 return
-            name = safe_name((q.get("name") or [""])[0])
-            p = os.path.join(self.root_dir, name)
-            if not os.path.isfile(p):
-                self._send(404, "没有这个文件")
+            self._stream(self.root_dir, (q.get("name") or [""])[0])
+            return
+
+        # ---- 电脑 → 手机
+        if u.path == "/api/phone":
+            if not self._token_ok(q):
+                self._send(401, json.dumps({"ok": False}), "application/json")
                 return
-            try:
-                size = os.path.getsize(p)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Length", str(size))
-                self.send_header(
-                    "Content-Disposition",
-                    "attachment; filename*=UTF-8''%s" % quote(name))
-                self.end_headers()
-                with open(p, "rb") as f:
-                    while True:
-                        b = f.read(256 * 1024)
-                        if not b:
-                            break
-                        self.wfile.write(b)
-            except Exception:
-                pass
+            self._send(200, json.dumps({"ok": True, "items": self._phone_listing()}),
+                       "application/json; charset=utf-8")
+            return
+
+        if u.path == "/phone/dl":
+            if not self._token_ok(q):
+                self._send(401, "口令不对")
+                return
+            self._stream(self.phone_dir, (q.get("name") or [""])[0])
             return
 
         self._send(404, "not found")
+
+    def _stream(self, base, name):
+        """把 base 目录下的一个文件发出去。名字已经过 safe_name，再核一次父目录。"""
+        p = os.path.join(base, safe_name(name))
+        if os.path.abspath(os.path.dirname(p)) != os.path.abspath(base) \
+                or not os.path.isfile(p):
+            self._send(404, "没有这个文件")
+            return
+        name = os.path.basename(p)
+        try:
+            size = os.path.getsize(p)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            self.send_header(
+                "Content-Disposition",
+                "attachment; filename*=UTF-8''%s" % quote(name))
+            self.end_headers()
+            with open(p, "rb") as f:
+                while True:
+                    b = f.read(256 * 1024)
+                    if not b:
+                        break
+                    self.wfile.write(b)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------- POST
     def do_POST(self):
@@ -411,6 +501,26 @@ class _Handler(BaseHTTPRequestHandler):
         out.sort(key=lambda x: (-x["mtime"], x["name"].lower()))
         return out[:200]
 
+    def _phone_listing(self):
+        """暂存区里等着给手机的文件。按时间倒序，最新的排前面。"""
+        out = []
+        try:
+            names = os.listdir(self.phone_dir)
+        except Exception:
+            return out
+        for name in names:
+            if name.startswith(".") or name.endswith(".l2ptmp"):
+                continue
+            p = os.path.join(self.phone_dir, name)
+            try:
+                if os.path.isfile(p):
+                    out.append({"name": name, "size": os.path.getsize(p),
+                                "mtime": int(os.path.getmtime(p))})
+            except Exception:
+                pass
+        out.sort(key=lambda x: (-x["mtime"], x["name"].lower()))
+        return out[:50]
+
 
 _NEED_TOKEN = """<!doctype html><html lang=zh><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -438,7 +548,9 @@ class WebShare:
     def start(self):
         try:
             os.makedirs(self.root_dir, exist_ok=True)
+            os.makedirs(phone_dir(self.root_dir), exist_ok=True)
             cls = type("_H", (_Handler,), {"root_dir": self.root_dir,
+                                           "phone_dir": phone_dir(self.root_dir),
                                            "token": self.token})
             srv = ThreadingHTTPServer(("0.0.0.0", self.port), cls)
             srv.daemon_threads = True
