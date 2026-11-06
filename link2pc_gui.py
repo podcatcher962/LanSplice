@@ -379,7 +379,15 @@ def load_cfg():
     d.setdefault("mirror_jobs", [])       # v1.6.1 常用镜像任务
     d.setdefault("sync_jobs", [])         # v1.8.0 自动同步任务
     d.setdefault("sync_on", True)         # 开着程序就同步
-    d.setdefault("theme", "auto")         # 浅色 / 深色 / auto（跟随系统）
+    # ---- 深浅色（v2.0.3 起默认浅色）
+    # 以前默认 auto（跟随系统），结果深色 Windows 的用户第一次打开就是黑的，
+    # 而截图、文档、论坛图全是浅色，看起来像两个软件。
+    # 老配置里的 auto 分不清「默认值」还是「用户真选了跟随系统」，
+    # 所以手动点过菜单的记一个 theme_user，只迁移没记过的那些。
+    if not d.get("theme"):
+        d["theme"] = "light"
+    elif d.get("theme") == "auto" and not d.get("theme_user"):
+        d["theme"] = "light"
     save_cfg(d)
     return d
 
@@ -1094,7 +1102,7 @@ class App:
 
     def _resolve_theme(self, mode=None):
         """把配置里的 light/dark/auto 解析成实际要用的那一套。"""
-        mode = (mode or self.cfg.get("theme") or "auto").lower()
+        mode = (mode or self.cfg.get("theme") or "light").lower()
         if mode == "auto":
             return "dark" if system_prefers_dark() else "light"
         return "dark" if mode == "dark" else "light"
@@ -1105,6 +1113,7 @@ class App:
         做法是把控件树按色值对一遍：老配色 -> 新配色，24 组映射。
         """
         self.cfg["theme"] = mode
+        self.cfg["theme_user"] = True   # 手动选过就别再被默认值迁移覆盖
         save_cfg(self.cfg)
         new = self._resolve_theme()
         old = self.theme_name
@@ -1122,11 +1131,18 @@ class App:
         for w in self.root.winfo_children():
             if isinstance(w, tk.Toplevel):
                 set_dark_titlebar(w, new == "dark")
+                # 体检窗口是另一个 Toplevel，recolor_tree(root) 走不到它，
+                # 得逐个通知。它自己按角色名重刷一遍颜色，不重建界面。
+                if hasattr(w, "on_theme_changed"):
+                    try:
+                        w.on_theme_changed()
+                    except Exception:
+                        pass
         self._sync_theme_menu()
 
     def _sync_theme_menu(self):
         try:
-            self.theme_var.set(self.cfg.get("theme", "auto"))
+            self.theme_var.set(self.cfg.get("theme", "light"))
         except Exception:
             pass
 
@@ -1205,7 +1221,7 @@ class App:
     def _build_body(self, r):
         """界面骨架。只建一次 —— 换主题是改颜色，不重跑这里。"""
         # ---- 菜单
-        self.theme_var = tk.StringVar(value=self.cfg.get("theme", "auto"))
+        self.theme_var = tk.StringVar(value=self.cfg.get("theme", "light"))
         m = tk.Menu(r, font=(FONT, 9))
         r.config(menu=m)
 
@@ -1393,12 +1409,21 @@ class App:
         self._mk_btn(qb, _t("g038"), self.set_recv_root, C_BLUE, width=7).pack(side="left", padx=(0, 4))
         self._mk_btn(qb, _t("g039"), self.open_recv_root, PALETTE["gray_btn"], width=6).pack(side="left")
 
+        # 体检：连不上的时候第一个要找的东西，所以摆在快捷条最右边常驻。
+        # 不放进底部操作行 —— 那里要留给状态文字，多一个按钮会把
+        # 「存到 C:\…」这类长句挤成省略号（v1.7.6 踩过）。
+        # width=None：按文字自然宽度撑开。写死 6 字符时，中文「体检」正好，
+        # 英文「Checkup」会被截成「Checkup」少半个字母（按钮不像 Label 会自动缩）
+        self.btn_diag = self._mk_btn(qb, _t("g572"), self.diagnose,
+                                     PALETTE["gray_btn2"], width=None)
+        self.btn_diag.pack(side="right", padx=(6, 14))
+
         # 按钮一开始就写对：Linux 上没有「一键」，只有「把命令给你」。
         # 等线程回来再改文字的话，开机那一两秒是误导的。
         self.btn_fw = self._mk_btn(
             qb, _t("g433") if not P.IS_WIN else _t("g040"),
             self.fw_dialog, PALETTE["warn"], width=14)
-        self.btn_fw.pack(side="right", padx=(6, 14))
+        self.btn_fw.pack(side="right", padx=(6, 8))
         self.lbl_fw = tk.Label(qb, text=_t("g041"), bg=PALETTE["bar"], fg=C_SUB,
                                font=(FONT, 9, "bold"))
         self.lbl_fw.pack(side="right", padx=(0, 4))
@@ -1663,7 +1688,14 @@ class App:
         found = [dict(f) for f in self._found]
         peer = (self.peer_ip, self.peer_port, self.peer_name)
 
+        # 体检窗口是独立的 Toplevel，也挂在 root 下面。它不重建 ——
+        # 销毁再开一个会把「已经跑出来的结论」连同窗口位置一起丢掉，
+        # 而且新窗口会重新扫一遍网络。这里只把它的文字换掉。
+        diag = None
         for w in self.root.winfo_children():
+            if getattr(self, "_diag_win", None) is w:
+                diag = w
+                continue
             w.destroy()
         self.rows = {}
         self._build_ui()
@@ -1687,6 +1719,11 @@ class App:
         self._refresh_queue_summary()
         self.lbl_status.config(text=_t("g067"))
         self._refresh_fw_status()
+        if diag is not None:
+            try:
+                diag.relocalize()
+            except Exception:
+                self._diag_win = None
 
     def _mk_btn(self, parent, text, cmd, color, width=12, big=False):
         # width=None 时按文字自然宽度撑开 —— 中文按钮写死字符宽度会被截断
@@ -4790,6 +4827,19 @@ class App:
         self._refresh_fw_status()
 
     def diagnose(self):
+        """连接诊断 = 网络体检窗口（v2.0.0 起内置，不再是独立程序）。
+
+        体检窗口里跑的是同一套探测代码，只是把结论画成一屏三段；
+        对端 IP 直接带过去。万一窗口起不来（缺模块、Tk 异常），
+        退回 v1.x 的纯文本报告，至少还能给用户一段能复制的东西。
+        """
+        try:
+            import link2pc_diag
+            link2pc_diag.open_window(self, getattr(self, "peer_ip", "") or None)
+            self.lbl_status.config(text=_t("g067"))
+            return
+        except Exception:
+            pass
         self.lbl_status.config(text=_t("g187"))
         threading.Thread(target=self._diag_worker, daemon=True).start()
 
@@ -5592,6 +5642,12 @@ def _run():
         # 否则用户开机时根本看不到那个框，程序却卡着等点击。
         app.quiet = True
         root.after(700, app.hide_window)
+
+    # --diag：起手就打开体检窗口，等于替用户点了那个「体检」按钮。
+    # 用途一：做桌面快捷方式，只想体检的时候不用先看主界面。
+    # 用途二：打包冒烟时确认体检模块真的进包了（--selftest-chat 的同类）。
+    if "--diag" in sys.argv:
+        root.after(700, app.diagnose)
     root.mainloop()
 
 
