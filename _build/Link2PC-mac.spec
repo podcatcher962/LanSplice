@@ -46,7 +46,10 @@ hiddenimports += ['qrcode', 'qrcode.constants', 'qrcode.util',
                   'link2pc_web', 'link2pc_cli',
                   'link2pc_i18n', 'link2pc_core', 'link2pc_history',
                   'link2pc_paths', 'link2pc_platform', 'link2pc_deps',
-                  'link2pc_chat', 'link2pc_chatwin', 'link2pc_sync']
+                  'link2pc_chat', 'link2pc_chatwin', 'link2pc_sync',
+                  'link2pc_diag',
+                  'netcheck_core', 'netcheck_rules', 'netcheck_scan',
+                  'netcheck_report']
 # link2pc_tray 在非 Windows 上主动 raise ImportError，不进包。
 
 # cryptography 的 openssl 后端有一批模块是运行时按名导入的，静态分析追不全。
