@@ -13,6 +13,11 @@
 
 传一半断了可以接着传，对端有同名文件不会覆盖。关掉窗口只是缩到托盘，接收不中断。
 
+不止两台也行：设备列表支持 Ctrl 多选，选中五六台、清单里放一次文件、点一次发送，
+程序会按顺序一台一台发完，最后给一张逐台结果。
+
+![群发](docs/multi-send.png)
+
 ![界面](docs/screenshot-cn.png)
 
 默认就是浅色。想换深色走「工具 → 深浅色」（浅色 / 深色 / 跟随系统）。电脑端、手机网页端、安卓端三处都支持，
@@ -51,7 +56,7 @@
 | 飞腾 / 鲲鹏 / 龙芯 | ⚠️ 协议与架构无关，但**尚未在真机上验证** |
 | macOS（Intel / Apple Silicon） | ⚠️ 有原生版，**但未在真机 Mac 上验证**：源码可直接跑，也可用 `build_macos.sh` 打成 `.app`；见 [docs/macos.md](docs/macos.md)（还没 Mac？用浏览器方式：[docs/mac-now.md](docs/mac-now.md)） |
 
-**Windows 只有一个文件，不用挑：`LanSplice-v2.0.3.exe`。**
+**Windows 只有一个文件，不用挑：`LanSplice-v2.1.0.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
@@ -269,7 +274,7 @@ LanSplice.exe version
 飞腾 / 鲲鹏（ARM64）、海光 / 兆芯（x86_64）、龙芯（LoongArch）之间照样互通 ——
 协议是字节级的，跟 CPU 架构无关。
 
-下载 **[LanSplice-2.0.3-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.0.3-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
+下载 **[LanSplice-2.1.0-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.1.0-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
 
 ```sh
 sudo sh install.sh
@@ -564,6 +569,15 @@ pyinstaller -F -w --name LanSplice \
 ---
 
 ## 更新记录
+
+**v2.1.0** — 选中几台，发一次就好
+- **群发**：设备列表支持多选（Ctrl 点选、Shift 连选）。选中五台、把文件丢进清单、点一次发送，
+  程序按顺序一台一台发完 —— 每台都走完整的握手、进度、跳过 / 改名判断，结尾给一张
+  逐台汇总（`✔ OFFICE-PC 3 个文件` / `✘ 前台 配对码不对`）。
+- **故意不做并行**：一块网卡一个路由器，并行只是把同样的带宽切成几份，每台进度条都会跳，
+  还可能让同一台机器同时弹出好几个接收确认。「第 2/5 台」这种顺序发反而读得清楚。
+- 有一台失败就**保留清单**方便重发，不会悄悄标成已发。
+- 协议没动 —— 2.1.0 照样能和 1.9.2、安卓版互通。
 
 **v2.0.3** — 默认打开就是浅色，仓库首页换成英文
 - **默认浅色**：原来默认跟随系统，深色 Windows 上第一次打开就是黑的，跟本页截图完全两个样。
