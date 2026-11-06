@@ -2603,6 +2603,21 @@ S = {
     "d123": ('打印机', 'printer'),
     "d124": ('LanSplice 传输', 'LanSplice transfer'),
     "d125": ('LanSplice 手机页', 'LanSplice phone page'),
+
+    # ---- v2.1.0 群发 / 多机
+    "g582": ('正在发往第 %d/%d 台：%s', 'Sending to %d/%d: %s'),
+    "g584": ('群发完成：%d 台成功，%d 台失败 · 共 %s',
+             'Group send: %d ok, %d failed · %s'),
+    "g585": ('✔ %s  %s', '✔ %s  %s'),
+    "g586": ('✘ %s  %s', '✘ %s  %s'),
+    "g587": ('%d 个文件', '%d file(s)'),
+    "g588": ('，跳过 %d 个', ', %d skipped'),
+    "g589": ('，失败 %d 个', ', %d failed'),
+    "g590": ('群发结果', 'Group send result'),
+    "g591": ('①  群发 %d 台', '①  Send to %d'),
+    "g592": ('已选 %d 台 — 会依次发给每一台',
+             '%d selected — sends to each in turn'),
+    "g593": ('Ctrl 点选可多台', 'Ctrl-click for more'),
 }
 
 LANGS = ("zh", "en")
