@@ -1433,7 +1433,9 @@ class App:
         body = tk.Frame(r, bg=C_BG)
         body.pack(fill="both", expand=True, padx=10, pady=(8, 0))
 
-        left = tk.Frame(body, bg=C_PANEL, width=214)
+        # v2.1.0：宽 12 px。设备名 + IP 在 214 下会被截掉结尾（DEV-LAPTOP
+        # 这种长名字），多选之后一排要显示三台，更不能挤。
+        left = tk.Frame(body, bg=C_PANEL, width=226)
         left.pack(side="left", fill="y", padx=(0, 8))
         left.pack_propagate(False)
         self.left = left
@@ -1441,13 +1443,22 @@ class App:
         tk.Label(left, text=_t("g042"), bg=C_PANEL, fg=C_TEXT, font=(FONT, 9, "bold"),
                  anchor="w").pack(fill="x", padx=12, pady=(12, 4))
 
+        # extended = 支持 Ctrl / Shift 多选，群发要用（v2.1.0）
         self.peer_list = tk.Listbox(left, height=5, bg=C_CARD, fg=C_TEXT,
+                                    selectmode="extended",
                                     font=(FONT, 9), relief="flat", activestyle="none",
                                     selectbackground=PALETTE["sel"], selectforeground=C_TEXT,
                                     highlightthickness=0, borderwidth=0)
         self.peer_list.pack(fill="x", padx=12)
         self.peer_list.bind("<<ListboxSelect>>", self.on_pick_peer)
         self._add_phone_row()
+
+        # 多选是 v2.1.0 才有的，不说一句没人会去 Ctrl 点第二台。
+        # 放灰字、不占高度：左栏是固定宽的，加一行也不会把按钮挤走。
+        self.lbl_peers_hint = tk.Label(
+            left, text=_t("g593"), bg=C_PANEL, fg=C_SUB,
+            font=(FONT, 8), anchor="w")
+        self.lbl_peers_hint.pack(fill="x", padx=12, pady=(2, 0))
 
         self.btn_scan = tk.Button(left, text=_t("g043"), command=self.scan_peers,
                                   bg=PALETTE["gray_btn2"], fg=C_WHITE, font=(FONT, 9),
@@ -1704,9 +1715,8 @@ class App:
         self._seen = set((f["ip"], int(f.get("port") or L.TCP_PORT))
                          for f in found)
         for f in found:
-            self._append_peer_row(
-                "  %s  %s:%d" % (f.get("name", "?"), f["ip"],
-                                 int(f.get("port") or L.TCP_PORT)))
+            self._append_peer_row(self._peer_row_text(
+                f.get("name", "?"), f["ip"], f.get("port")))
         self._add_phone_row()
         if peer[0]:
             for i, f in enumerate(found):
@@ -1864,9 +1874,8 @@ class App:
             self.lbl_status.config(text=_t("g080"))
             return
         for f in shown:
-            self._append_peer_row(
-                "  %s  %s:%d" % (f.get("name", "?"), f.get("ip"),
-                                 int(f.get("port") or L.TCP_PORT)))
+            self._append_peer_row(self._peer_row_text(
+                f.get("name", "?"), f.get("ip"), f.get("port")))
         self._add_phone_row()
         self.peer_list.selection_set(0)
         self.on_pick_peer(None)
@@ -1907,7 +1916,7 @@ class App:
                     f["ip"] = ip
                     f["port"] = port
                     self.peer_list.delete(i)
-                    self.peer_list.insert(i, "  %s  %s:%d" % (name, ip, port))
+                    self.peer_list.insert(i, self._peer_row_text(name, ip, port))
                     if was_sel:
                         self.peer_list.selection_clear(0, "end")
                         self.peer_list.selection_set(i)
@@ -1926,7 +1935,7 @@ class App:
                 break
 
         self._found.append({"ip": ip, "port": port, "name": name})
-        self._append_peer_row("  %s  %s:%d" % (name, ip, port))
+        self._append_peer_row(self._peer_row_text(name, ip, port))
         self._add_phone_row()
 
         # 关键：以前这里判断 "没有 peer_ip 才自动选中"，结果配置里存着上次的
@@ -1976,6 +1985,19 @@ class App:
         except Exception:
             pass
 
+    def _peer_row_text(self, name, ip, port):
+        """
+        设备列表里那一行的文字。
+
+        端口是默认值时省略：`  DEV-LAPTOP  192.168.0.30:47820` 在 214 px 的
+        左栏里会被截成 `...:478`（v2.1.0 加多选时才发现），默认端口省掉正好
+        够；改过端口的照样带出来，不会让人误以为连的是默认口。
+        """
+        port = int(port or L.TCP_PORT)
+        if port == L.TCP_PORT:
+            return "  %s  %s" % (name, ip)
+        return "  %s  %s:%d" % (name, ip, port)
+
     def _append_peer_row(self, row):
         """
         插到设备行的末尾、也就是「手机」那一行**前面**。
@@ -2003,11 +2025,46 @@ class App:
         finally:
             self.peer_list.bind("<<ListboxSelect>>", self.on_pick_peer)
 
+    # ------------------------------------------------------------ 群发（v2.1.0）
+
+    def selected_peers(self):
+        """
+        设备列表里选中的若干台，跳过「手机」那一行。
+
+        返回 [(ip, port, name), ...]，顺序就是列表里的顺序。
+        单选时长度是 1，走的老路径；两台以上才走群发。
+        """
+        out = []
+        try:
+            phone = self._phone_row_at()
+            for i in self.peer_list.curselection():
+                if i == phone:
+                    continue
+                if i < len(self._found):
+                    f = self._found[i]
+                    out.append((f["ip"], int(f.get("port") or L.TCP_PORT),
+                                f.get("name") or f["ip"]))
+        except Exception:
+            pass
+        return out
+
+    def _refresh_send_btn(self):
+        """选中两台以上时，按钮直接改成「群发 N 台」，不用去猜会发给谁。"""
+        try:
+            n = len(self.selected_peers())
+            self.btn_send.config(text=(_t("g591") % n) if n > 1 else _t("g063"))
+            if n > 1:
+                self.lbl_status.config(text=_t("g592") % n)
+        except Exception:
+            pass
+
     def on_pick_peer(self, _evt):
         sel = self.peer_list.curselection()
         if not sel:
             return
-        idx = sel[0]
+        # 多选时以「最后点的那台」当主对端：Ctrl 加选的顺序就是 curselection 的
+        # 顺序，最后一项是刚点下去的，用它做单目标的操作才符合直觉。
+        idx = sel[-1]
         if idx == self._phone_row_at():
             # 点「手机」不是选对端：出二维码，顺带把道理讲清楚。
             # 选中状态还给原来的对端，免得左栏看起来像「一台都没选」。
@@ -2021,6 +2078,7 @@ class App:
         if idx < len(found):
             f = found[idx]
             self.set_peer(f["ip"], int(f.get("port") or L.TCP_PORT), f.get("name"))
+        self._refresh_send_btn()
 
     def manual_peer(self):
         v = simpledialog.askstring(
@@ -3437,7 +3495,14 @@ class App:
         self._prepare_rows(targets)
 
         self._send_t0 = time.time()
-        threading.Thread(target=self._send_worker, args=(targets,), daemon=True).start()
+        peers = self.selected_peers()
+        if len(peers) > 1:
+            # 选中了多台：一台一台发，每台都走完整的握手和进度
+            threading.Thread(target=self._send_worker_multi,
+                             args=(peers, targets), daemon=True).start()
+        else:
+            threading.Thread(target=self._send_worker,
+                             args=(targets,), daemon=True).start()
 
     def _prepare_rows(self, targets):
         """
@@ -3485,13 +3550,83 @@ class App:
                     pass
         return None
 
+    def _upload_all(self, cli, targets, base_done):
+        """
+        把 targets 逐个推给已经连上的 cli。
+
+        单目标发送和群发共用这一段：进度事件的形状、跳过 / 改名的措辞、
+        取消的时机必须一致，两边各写一遍迟早会走样。
+        返回 (本轮完成字节, 成功数, 跳过数, 失败列表)。
+        """
+        done = 0
+        ok_n = 0
+        skip_n = 0
+        failed = []
+        deep = bool(self.cfg.get("deep_verify"))
+
+        for idx, (local, rel) in enumerate(targets):
+            if self.cancel_flag.is_set():
+                break
+            try:
+                size = os.path.getsize(local)
+            except Exception:
+                continue
+
+            state = ("file_start", (rel, idx + 1, len(targets), size))
+            self.events.put(state)
+
+            base = base_done + done
+
+            def prog(d, t, spd, _base=base, _size=size):
+                now = time.time()
+                if now - self.last_ui < 0.10 and d < t:
+                    return
+                self.last_ui = now
+                self.done_bytes = _base + d
+                self.events.put(("progress", (rel, d, t, spd)))
+
+            try:
+                vstate = {"last": -1}
+
+                def vprog(d, t, _rel=rel):
+                    # 深校验要先把整个文件读一遍，不给进度用户会以为卡死
+                    if not t:
+                        return
+                    pct = int(d * 100 / t)
+                    if pct >= vstate["last"] + 5 or pct >= 100:
+                        vstate["last"] = pct
+                        self.events.put(("status", _t("g334") % pct))
+
+                skipped, sent, final_rel = cli.upload(
+                    local, rel, progress=prog,
+                    cancel=self.cancel_flag.is_set,
+                    deep_verify=deep, verify_progress=vprog)
+                if skipped:
+                    skip_n += 1
+                    self.events.put(("file_done", (rel, size, _t("g114"), 0)))
+                elif final_rel and final_rel.replace("\\", "/") != rel.replace("\\", "/"):
+                    # 对端有同名文件，被改名了。不说清楚用户去接收目录会找不到。
+                    self.events.put(("file_done", (
+                        rel, size,
+                        _t("g336") % os.path.basename(final_rel.replace("\\", "/")),
+                        0)))
+                else:
+                    ok_n += 1
+                    self.events.put(("file_done", (rel, size, _t("g115"), 0)))
+                done += size
+            except InterruptedError:
+                self.events.put(("file_done", (rel, 0, _t("g116"), 0)))
+                break
+            except Exception as e:
+                failed.append((rel, str(e)))
+                self.events.put(("file_done", (rel, size, _t("g117"), 0)))
+                done += size
+
+        return done, ok_n, skip_n, failed
+
     def _send_worker(self, targets):
         total_all = sum(os.path.getsize(p) for p, _ in targets if os.path.isfile(p))
         self.total_bytes = total_all
-        done_all = 0
-        skipped_n = 0
-        failed = []
-        deep = bool(self.cfg.get("deep_verify"))
 
         try:
             cli = L.LinkClient(self.peer_ip, self.peer_port, self.key,
@@ -3510,62 +3645,7 @@ class App:
         self.events.put(("status", _t("g113") % (cli.peer_name or self.peer_ip)))
 
         try:
-            for idx, (local, rel) in enumerate(targets):
-                if self.cancel_flag.is_set():
-                    break
-                try:
-                    size = os.path.getsize(local)
-                except Exception:
-                    continue
-
-                state = ("file_start", (rel, idx + 1, len(targets), size))
-                self.events.put(state)
-
-                base = done_all
-
-                def prog(d, t, spd, _base=base, _size=size):
-                    now = time.time()
-                    if now - self.last_ui < 0.10 and d < t:
-                        return
-                    self.last_ui = now
-                    self.done_bytes = _base + d
-                    self.events.put(("progress", (rel, d, t, spd)))
-
-                try:
-                    vstate = {"last": -1}
-
-                    def vprog(d, t, _rel=rel):
-                        # 深校验要先把整个文件读一遍，不给进度用户会以为卡死
-                        if not t:
-                            return
-                        pct = int(d * 100 / t)
-                        if pct >= vstate["last"] + 5 or pct >= 100:
-                            vstate["last"] = pct
-                            self.events.put(("status", _t("g334") % pct))
-
-                    skipped, sent, final_rel = cli.upload(
-                        local, rel, progress=prog,
-                        cancel=self.cancel_flag.is_set,
-                        deep_verify=deep, verify_progress=vprog)
-                    if skipped:
-                        skipped_n += 1
-                        self.events.put(("file_done", (rel, size, _t("g114"), 0)))
-                    elif final_rel and final_rel.replace("\\", "/") != rel.replace("\\", "/"):
-                        # 对端有同名文件，被改名了。不说清楚用户去接收目录会找不到。
-                        self.events.put(("file_done", (
-                            rel, size,
-                            _t("g336") % os.path.basename(final_rel.replace("\\", "/")),
-                            0)))
-                    else:
-                        self.events.put(("file_done", (rel, size, _t("g115"), 0)))
-                    done_all += size
-                except InterruptedError:
-                    self.events.put(("file_done", (rel, 0, _t("g116"), 0)))
-                    break
-                except Exception as e:
-                    failed.append((rel, str(e)))
-                    self.events.put(("file_done", (rel, size, _t("g117"), 0)))
-                    done_all += size
+            done_all, _ok, skipped_n, failed = self._upload_all(cli, targets, 0)
         finally:
             try:
                 cli.close()
@@ -3573,6 +3653,111 @@ class App:
                 pass
 
         self.events.put(("send_end", (done_all, skipped_n, failed, None)))
+
+    def _send_worker_multi(self, peers, targets):
+        """
+        群发：按设备顺序，一台一台发完。
+
+        为什么不做成并行：同一块网卡、同一个路由器，并行只是把带宽切成几份，
+        总时间差不多，但每台的进度都会变成一跳一跳的，还容易让对面同时弹
+        好几个接收任务。顺序发反而好读 —— 界面上「第 2/5 台」清清楚楚。
+        """
+        per = sum(os.path.getsize(p) for p, _ in targets if os.path.isfile(p))
+        self.total_bytes = per * max(1, len(peers))
+        done_all = 0
+        results = []
+
+        for i, (ip, port, name) in enumerate(peers, 1):
+            if self.cancel_flag.is_set():
+                break
+            self.events.put(("status", _t("g582") % (i, len(peers), name)))
+            try:
+                cli = L.LinkClient(ip, port, self.key,
+                                   timeout=L.CONNECT_TIMEOUT).open()
+            except L.AuthError:
+                results.append((name, ip, 0, 0, 0, _t("g111"), [], ""))
+                continue
+            except Exception as e:
+                results.append((name, ip, 0, 0, 0,
+                                L.conn_error_text(e, ip, port), [], ""))
+                continue
+
+            # 每台记自己的接收目录：五台的目录可能不一样，历史里
+            # 「打开接收目录」要打开对的那一个，不能都用最后一台的。
+            root = cli.peer_root or ""
+            self.peer_root = root or self.peer_root
+            # 每台开始都把清单行清回 0%，否则第二台会接着第一台的 100%
+            self._prepare_rows(targets)
+            try:
+                d, ok, sk, failed = self._upload_all(cli, targets, done_all)
+            finally:
+                try:
+                    cli.close()
+                except Exception:
+                    pass
+            done_all += d
+            results.append((name, ip, ok, sk, len(failed), None, failed, root))
+
+        self.events.put(("send_end_multi", (done_all, results, None)))
+
+    def _send_done_multi(self, done, results, err):
+        self.sending = False
+        self.btn_send.config(state="normal")
+        self.btn_pull.config(state="normal")
+        self.btn_stop.config(state="disabled")
+        self._refresh_send_btn()
+
+        secs = max(0.001, time.time() - self._send_t0) if self._send_t0 else 0.0
+        avg = (done / secs / 1048576.0) if secs else 0.0
+        ok_n = sum(1 for r in results if r[5] is None)
+        bad_n = len(results) - ok_n
+
+        short = _t("g584") % (ok_n, bad_n, L.human_size(done))
+        self.lbl_status.config(text=short)
+        if not bad_n:
+            self.pbar["value"] = 1000
+
+        lines = []
+        for name, ip, ok, sk, nfail, perr, failed, _root in results:
+            who = "%s  %s" % (name, ip)
+            if perr:
+                lines.append(_t("g586") % (who, perr))
+                continue
+            tail = _t("g587") % ok
+            if sk:
+                tail += _t("g588") % sk
+            if nfail:
+                tail += _t("g589") % nfail
+            lines.append(_t("g585") % (who, tail))
+
+        if bad_n:
+            messagebox.showwarning(_t("g590"),
+                                   short + "\n\n" + "\n".join(lines))
+        else:
+            messagebox.showinfo(_t("g590"),
+                                short + "\n\n" + "\n".join(lines))
+
+        # 缩到托盘时用户看不见进度条，没个动静就完全不知道传完了
+        if not self.root.winfo_viewable():
+            self._notify(_t("g590"), short[:120])
+
+        # 每台一条历史，才知道「上次是发给谁失败的」
+        for name, ip, ok, sk, nfail, perr, failed, root in results:
+            try:
+                HIST.append(HIST.make_entry(
+                    "out", peer=name, ip=ip, port=int(self.peer_port or 0),
+                    files=ok + nfail + sk, nbytes=0,
+                    ok=ok, fail=nfail, skip=sk,
+                    root=root,
+                    src=[p for p in list(self.queue_paths)],
+                    names=[HIST.disp_name(p) for p in self.queue_paths],
+                    bad=[[n, e] for n, e in (failed or [])]))
+            except Exception:
+                pass
+
+        # 全部成功才清清单；有一台失败就留着，方便重发
+        if not bad_n and all(r[4] == 0 for r in results):
+            self._prune_finished()
 
     def _send_done(self, done, skipped, failed, err):
         self.sending = False
@@ -5306,6 +5491,9 @@ class App:
         elif kind == "send_end":
             done, skipped, failed, err = data
             self._send_done(done, skipped, failed, err)
+        elif kind == "send_end_multi":
+            done, results, err = data
+            self._send_done_multi(done, results, err)
         elif kind == "pull_stat":
             self._on_pull_stat(*data)
         elif kind == "pull_end":
