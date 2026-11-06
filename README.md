@@ -18,10 +18,16 @@ other, click "Find again" on the left, drag your files into the dashed box, then
 Interrupted transfers resume where they stopped, and a file already on the other side is never
 overwritten. Closing the window only minimises to the tray — receiving keeps running.
 
+More than two machines? The device list is multi-select: Ctrl-click five PCs, drop the files in
+once, and one Send walks through them in turn, reporting a per-device result at the end.
+
+![Group send](docs/multi-send-en.png)
+
 ![Screenshot](docs/screenshot-en.png)
 
-The app opens in the light theme by default. A dark theme is included (Tools → Theme:/nLight / Dark / Follow system) — on the desktop app,
-the phone web page and the Android client alike, and switching never interrupts a transfer:
+The app opens in the light theme by default. A dark theme is included (Tools → Theme:
+Light / Dark / Follow system) — on the desktop app, the phone web page and the Android client
+alike, and switching never interrupts a transfer:
 
 ![Dark theme](docs/theme_dark.png)
 
@@ -59,7 +65,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
 | macOS (Intel / Apple Silicon) | ⚠️ Native build available, **but not verified on a real Mac yet**: run from source, or build a `.app` with `build_macos.sh`; see [docs/macos.md](docs/macos.md) (no Mac? use browser mode: [docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v2.0.3.exe`.**
+**One file, no decision to make: `LanSplice-v2.1.0.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -291,7 +297,7 @@ UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium /
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
-Download **[LanSplice-2.0.3-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.0.3-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
+Download **[LanSplice-2.1.0-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.1.0-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
 
 ```sh
 sudo sh install.sh
@@ -538,6 +544,17 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v2.1.0** — pick several devices, send once
+- **Group send**: the device list is now multi-select (Ctrl-click, Shift-click). Pick five
+  machines, drop the files in, hit send once — it walks through them one at a time, each with
+  its own handshake, progress and skip/rename handling, and reports a per-device summary at the
+  end (`✔ OFFICE-PC 3 files` / `✘ FRONT-DESK wrong pairing code`).
+- Deliberately **not parallel**: one NIC and one router mean parallel sends just split the same
+  bandwidth, make every progress bar jump, and possibly pop several receive prompts on the same
+  peer at once. Sequential keeps "2/5 done" honest.
+- If one machine fails, the queue is kept so you can resend; nothing is silently marked as sent.
+- Protocol untouched — v2.1.0 still talks to 1.9.2 and the Android app.
 
 **v2.0.3** — opens in the light theme, and the English README is now the front page
 - **Light by default**: the app used to follow the system theme, so on a Windows set to dark
