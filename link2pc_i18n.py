@@ -79,8 +79,8 @@ S = {
         'My network details…',
     ),
     "g018": (
-        '连接诊断…',
-        'Connection diagnosis…',
+        '网络体检…',
+        'Network checkup…',
     ),
     "g019": (
         '打开接收目录',
@@ -2337,6 +2337,272 @@ S = {
         'No arguments. Subcommands: serve (receive), send, devices, version. '
         'Use -h for details.',
     ),
+
+    # ---- 网络体检（v2.0.0 并入主程序）
+    "g532": ('网络体检', 'Network checkup'),
+    "g533": ('本机与网关', 'This PC & gateway'),
+    "g534": ('局域网设备', 'LAN devices'),
+    "g535": ('体检结论', 'Findings'),
+    "g536": ('对端 IP（可选）', 'Peer IP (optional)'),
+    "g537": ('开始体检', 'Run checkup'),
+    "g538": ('体检中…', 'Checking…'),
+    "g539": ('重新体检', 'Run again'),
+    "g541": ('导出报告', 'Export report'),
+    "g542": ('关闭', 'Close'),
+    "g543": ('准备就绪', 'Ready'),
+    "g544": ('网关', 'Gateway'),
+    "g545": ('外网', 'Internet'),
+    "g546": ('局域网', 'LAN'),
+    "g547": ('地址', 'Address'),
+    "g548": ('类型', 'Type'),
+    "g549": ('名称 / 型号', 'Name / model'),
+    "g550": ('路由器', 'Router'),
+    "g551": ('电脑', 'PC'),
+    "g552": ('手机', 'Phone'),
+    "g553": ('其他', 'Other'),
+    "g554": ('正在体检…', 'Checking…'),
+    "g555": ('完成，用时 %.1f 秒', 'Done in %.1f s'),
+    "g556": ('体检失败', 'Checkup failed'),
+    "g557": ('还没有结果', 'No result yet'),
+    "g558": ('先点「开始体检」，再导出报告。', 'Run a checkup before exporting.'),
+    "g559": ('保存体检报告', 'Save checkup report'),
+    "g560": ('报告已保存：%s', 'Report saved: %s'),
+    "g561": ('报告已保存', 'Report saved'),
+    "g562": ('要现在打开看看吗？\n\n%s', 'Open it now?\n\n%s'),
+    "g563": ('共 %d 台　·　邻居表 + SSDP + LanSplice 广播',
+             '%d device(s)　·　ARP + SSDP + LanSplice broadcast'),
+    "g564": ('运行中', 'Running'),
+    "g565": ('未运行', 'Not running'),
+    "g566": ('端口被占', 'Port in use'),
+    "g567": ('网关 %s　外网探测 %s', 'Gateway %s　probe %s'),
+    "g568": ('%s　MAC %s　·　来源 %s', '%s　MAC %s　·　from %s'),
+    "g569": ('没有 MAC 记录', 'no MAC record'),
+    "g570": ('对端 IP 形如 192.168.0.20。', 'Peer IP looks like 192.168.0.20.'),
+    "g571": ('IP 格式不对', 'Bad IP address'),
+    "g572": ('体检', 'Checkup'),
+    "g573": ('没有联网', 'not connected'),
+    "g574": ('无线', 'Wi-Fi'),
+    "g575": ('有线', 'Wired'),
+    "g577": ('体检失败：%s', 'Checkup failed: %s'),
+    "g578": ('不通', 'unreachable'),
+    "g579": ('网络体检', 'Network checkup'),
+    "g580": ('连不上时，先看这里', 'when a transfer fails, start here'),
+    "g581": ('%d 台', '%d device(s)'),
+
+    # ---- 体检结论（netcheck_rules.py）
+    # 这些是「证据 → 结论」那段文字。窗口标题、按钮早就双语了，但结论一直
+    # 写死在规则里，于是英文界面一跑体检，右侧整栏还是中文。
+    "d001": ('有条规则没跑完', 'A rule did not finish'),
+    "d002": ('没有发现问题', 'No problems found'),
+    "d003": ('本机、链路、端口都正常。',
+             'This PC, the link and the ports all look fine.'),
+    "d004": ('本机没有可用的 IPv4 地址',
+             'This PC has no usable IPv4 address'),
+    "d005": ('没找到任何一块已联网的网卡，或者只有 169.254 开头的自动地址。',
+             'No connected adapter was found, or the only address is a '
+             '169.254 self-assigned one.'),
+    "d006": ('先确认网线插好 / Wi-Fi 已连上，再点一次体检。',
+             'Check the cable or the Wi-Fi connection, then run the checkup again.'),
+    "d007": ('本机有 %d 个 IPv4 地址，其中 %d 个像虚拟网卡',
+             'This PC has %d IPv4 addresses (%d virtual-looking)'),
+    "d008": ('实体：%s；虚拟：%s。装了 VMware / VirtualBox / Hyper-V / VPN 的机器，'
+             'UDP 广播可能被系统挑中虚拟网卡，真实局域网里的对端就收不到。',
+             'Physical: %s; virtual: %s. On machines with VMware / VirtualBox / '
+             'Hyper-V / VPN, the system may send UDP broadcasts out of a virtual '
+             'adapter, so the peer on the real LAN never receives them.'),
+    "d009": ('本机有 %d 块网卡，注意广播从哪块出去',
+             'This PC has %d adapters — watch which one carries the broadcast'),
+    "d010": ('检测到这些地址：%s。都是实体网卡时广播会各自发出，一般不影响；'
+             '如果对端仍然收不到，先确认两台机器在同一网段。',
+             'Addresses found: %s. Broadcasts go out on every physical adapter, so '
+             'this is usually harmless. If the peer still cannot see you, first make '
+             'sure both machines are on the same subnet.'),
+    "d011": ('LanSplice 已经是按每块网卡各发一遍广播；如果仍发现不到对端，'
+             '先临时禁用虚拟网卡再试。',
+             'LanSplice already broadcasts on every adapter; if the peer is still '
+             'not found, temporarily disable the virtual adapter and try again.'),
+    "d012": ('无', 'none'),
+    "d013": ('、', ', '),
+    "d014": ('到网关丢包 %.0f%%，链路本身有问题',
+             '%.0f%% packet loss to the gateway — the link itself is at fault'),
+    "d015": ('网关 %s：发 %d 个包只回来 %d 个。',
+             'Gateway %s: only %d of %d probes came back.'),
+    "d016": ('先换根网线或换个交换机口；无线的话靠近路由器再测一次。',
+             'Try another cable or switch port; on Wi-Fi, move closer to the '
+             'router and test again.'),
+    "d017": ('到网关有轻微丢包（%.0f%%）',
+             'Slight packet loss to the gateway (%.0f%%)'),
+    "d018": ('网关 %s：平均 %.1f ms，抖动 %.1f ms。',
+             'Gateway %s: %.1f ms average, %.1f ms jitter.'),
+    "d019": ('偶尔丢包通常是无线信号或网线接触问题，传大文件会明显变慢。',
+             'Occasional loss is usually a weak Wi-Fi signal or a loose cable; '
+             'large transfers will slow down noticeably.'),
+    "d020": ('到网关抖动 %.0f ms，链路不稳',
+             '%.0f ms jitter to the gateway — unstable link'),
+    "d021": ('平均 %.1f ms，但相邻两次最多差 %.0f ms。',
+             '%.1f ms average, but consecutive probes differ by up to %.0f ms.'),
+    "d022": ('无线信号弱或信道拥挤时常见。换 5GHz、或靠近路由器。',
+             'Common with a weak signal or a crowded channel. Switch to 5 GHz or '
+             'move closer to the router.'),
+    "d023": ('到网关延迟偏高（%.0f ms）', 'High latency to the gateway (%.0f ms)'),
+    "d024": ('有线网络到自己的路由器一般应该在 1~3 ms。',
+             'A wired link to your own router should normally be 1–3 ms.'),
+    "d025": ('检查是不是走了电力猫、Wi-Fi 中继，或者路由器负载过高。',
+             'Check for powerline adapters, Wi-Fi repeaters, or an overloaded router.'),
+    "d026": ('到网关正常', 'Gateway OK'),
+    "d027": ('%s：%d/%d 个包回来，平均 %.1f ms，抖动 %.1f ms。',
+             '%s: %d/%d probes returned, %.1f ms average, %.1f ms jitter.'),
+    "d028": ('外网探测不通（可能被路由器禁了 ICMP）',
+             'Internet probe failed (the router may block ICMP)'),
+    "d029": ('发 %d 个包回来 %d 个。能上网但 ping 不通是常见配置，不一定是故障。',
+             '%d of %d probes returned. Blocking ping while the internet still '
+             'works is a common setup, not necessarily a fault.'),
+    "d030": ('改用浏览器打开任意网站验证；能开就忽略这条。',
+             'Open any website in a browser to confirm; if it loads, ignore this.'),
+    "d031": ('外网丢包 %.0f%%', '%.0f%% packet loss to the internet'),
+    "d032": ('平均 %.1f ms，抖动 %.1f ms。', '%.1f ms average, %.1f ms jitter.'),
+    "d033": ('如果局域网内传文件不受影响，问题在上游宽带，不是你的设备。',
+             'If LAN transfers are unaffected, the problem is upstream with your '
+             'ISP, not with your devices.'),
+    "d034": ('外网正常', 'Internet OK'),
+    "d035": ('平均 %.1f ms，抖动 %.1f ms，丢包 %.0f%%。',
+             '%.1f ms average, %.1f ms jitter, %.0f%% loss.'),
+    "d036": ('局域网里只看到自己', 'Only this PC is visible on the LAN'),
+    "d037": ('邻居表是空的，连网关的 MAC 都没缓存到。',
+             'The neighbor table is empty — not even the gateway MAC is cached.'),
+    "d038": ('无线网络如果是「访客网络」或开了 AP 隔离，设备之间互相看不见，'
+             '这种网络下任何局域网直传都用不了。',
+             'On a guest network or with AP isolation enabled, devices cannot see '
+             'each other, and no LAN transfer tool will work.'),
+    "d039": ('局域网里只有网关一台设备', 'Only the gateway is visible on the LAN'),
+    "d040": ('这可能是对的——其他设备没开机，或者处于省电休眠。'
+             '也可能是路由器开了无线客户端隔离。',
+             'This may be correct: other devices are off or dozing. Or the router '
+             'has wireless client isolation enabled.'),
+    "d041": ('让对端电脑先打开 LanSplice，再点一次体检。',
+             'Start LanSplice on the peer, then run the checkup again.'),
+    "d042": ('局域网里看到 %d 台设备', '%d device(s) visible on the LAN'),
+    "d043": ('邻居表里有记录，说明二层是通的。',
+             'The neighbor table has entries, so layer 2 is working.'),
+    "d044": ('端口被别的程序占着：%s', 'Port held by another program: %s'),
+    "d045": ('%s（%s）', '%s (%s)'),
+    "d046": ('LanSplice 需要 47820（传输）和 47822（手机网页）。'
+             '被别的程序先占了，它自己会起不来或者只能半残。',
+             'LanSplice needs 47820 (transfer) and 47822 (phone page). If another '
+             'program grabbed them first, LanSplice will not start or will only '
+             'half work.'),
+    "d047": ('关掉上面那个程序再启动 LanSplice；或在它的 config.json 里换端口。',
+             'Close that program and start LanSplice again, or change the port in '
+             'its config.json.'),
+    "d048": ('LanSplice 正在运行', 'LanSplice is running'),
+    "d049": ('47820 / 47822 已经在监听（进程 %s），端口这块不用担心。',
+             '47820 / 47822 are already listening (process %s) — no port problem.'),
+    "d050": ('对端填的是本机地址 %s', 'The peer address is this PC itself (%s)'),
+    "d051": ('这台机器自己就是 %s，自己连自己看不出任何问题。',
+             'This machine is %s itself; connecting to yourself proves nothing.'),
+    "d052": ('换成另一台电脑的 IP 再体检；想看本机状态的话，左边那栏已经够了。',
+             'Use another computer\'s IP and run the checkup again; the left column '
+             'already covers this PC.'),
+    "d053": ('对端 %s 完全没有响应', 'Peer %s does not respond at all'),
+    "d054": ('ICMP 发了 %d 个包一个没回，47820 / 47822 也连不上。',
+             'All %d ICMP probes went unanswered, and neither 47820 nor 47822 '
+             'accepts a connection.'),
+    "d055": ('三种可能：对端没开机 / 不在同一个网段 / 它的防火墙把一切都挡了。'
+             '先看对端 IP 前三位是否和你一样。',
+             'Three possibilities: the peer is off, it is on another subnet, or its '
+             'firewall blocks everything. First check that the first three octets '
+             'of its IP match yours.'),
+    "d056": ('对端 %s 在线，传输端口通', 'Peer %s is up, transfer port open'),
+    "d057": ('47820 可以连上，文件传输这条路没障碍。',
+             '47820 accepts connections, so file transfer has a clear path.'),
+    "d058": ('它不回应 ping（Windows 防火墙默认挡 ICMP 回显，很常见），'
+             '但传输端口是通的，不影响使用。',
+             # 这一条是接在上一句后面的，英文之间要留一个空格
+             ' It does not answer ping (Windows Firewall blocks inbound ICMP by '
+             'default — very common), but the transfer port is open, so nothing '
+             'is affected.'),
+    "d059": ('对端开着 LanSplice 手机页，但传输端口没开',
+             'Peer serves the LanSplice phone page, but the transfer port is closed'),
+    "d060": ('47822 通、47820 不通——可能是只开了「手机传文件」没开主服务。',
+             '47822 is open but 47820 is not — maybe only "phone transfer" is '
+             'running, not the main service.'),
+    "d061": ('在对端点一次「一键放行防火墙」，再确认主界面在运行。',
+             'Click "Allow in firewall" on the peer and make sure its main window '
+             'is running.'),
+    "d062": ('对端在线，但 LanSplice 的两个端口都不通',
+             'Peer is up, but neither LanSplice port is open'),
+    "d063": ('ping 得通说明机器活着；47820 / 47822 都不通，'
+             '最常见的是对端没开软件，其次是 Windows 防火墙拦了入站。',
+             'Ping works, so the machine is alive; both 47820 and 47822 are closed. '
+             'Most often LanSplice is simply not running on the peer, or Windows '
+             'Firewall blocks inbound traffic.'),
+    "d064": ('让对端打开 LanSplice，点一次「一键放行防火墙」。',
+             'Start LanSplice on the peer and click "Allow in firewall".'),
+    "d065": ('能 ping 通却连不上，常见于无线客户端隔离',
+             'Ping works but connections fail — often Wi-Fi client isolation'),
+    "d066": ('同一路由器下，开了「AP 隔离 / 客户端隔离」时，'
+             '设备之间 ping 可能通，但 TCP 连接被拦。',
+             'With "AP isolation / client isolation" enabled on the same router, '
+             'devices may still ping each other while TCP connections are blocked.'),
+    "d067": ('如果这台是连 Wi-Fi 的：换有线试一次，或者登录路由器关掉 AP 隔离。',
+             'If this PC is on Wi-Fi, try a cable, or log in to the router and '
+             'disable AP isolation.'),
+    "d068": ('端口通，但广播发现不到对端',
+             'Port is open, but broadcast cannot find the peer'),
+    "d069": ('单播能连上、广播收不到，说明组播/广播被拦了，'
+             '或者你们俩不在同一个广播域。',
+             'Unicast connects but broadcast does not arrive, so multicast/broadcast '
+             'is blocked, or the two machines are in different broadcast domains.'),
+    "d070": ('在 LanSplice 里直接填对端 IP 连接，不要依赖「重新查找设备」。',
+             'Enter the peer IP directly in LanSplice instead of relying on '
+             '"Find devices again".'),
+    "d071": ('读取本机网卡…', 'Reading local adapters…'),
+    "d072": ('探测局域网、延迟、端口…', 'Probing LAN, latency, ports…'),
+    "d073": ('出结论…', 'Drawing conclusions…'),
+    "d074": ('邻居表', 'ARP table'),
+    "d075": ('LanSplice 在线', 'LanSplice online'),
+
+    # ---- 体检报告（netcheck_report.py）
+    "d080": ('问题', 'Problem'),
+    "d081": ('注意', 'Notice'),
+    "d082": ('正常', 'OK'),
+    "d083": ('无数据', 'No data'),
+    "d084": ('没有测得数据。', 'No measurements were collected.'),
+    "d085": ('平均', 'avg'),
+    "d086": ('最小 / 最大', 'min / max'),
+    "d087": ('抖动', 'jitter'),
+    "d088": ('丢包', 'loss'),
+    "d089": ('样本：%s', 'Samples: %s'),
+    "d090": ('对端 %s', 'Peer %s'),
+    "d091": ('端口', 'Ports'),
+    "d092": ('%s（%s）', '%s (%s)'),
+    "d093": ('没有开放端口', 'no open ports'),
+    "d094": ('LanSplice 网络体检报告 %s', 'LanSplice Network Checkup Report %s'),
+    "d095": ('LanSplice 网络体检报告', 'LanSplice Network Checkup Report'),
+    "d096": ('%s　·　耗时约 %s 秒', '%s　·　about %s s'),
+    "d097": ('问题 %d · 注意 %d · 正常 %d',
+             'Problem %d · Notice %d · OK %d'),
+    "d099": ('掩码', 'Mask'),
+    "d100": ('广播地址', 'Broadcast'),
+    "d101": ('链路', 'Link'),
+    "d102": ('网卡', 'Adapter'),
+    "d103": ('速率', 'Speed'),
+    "d105": ('网关与外网', 'Gateway & internet'),
+    "d106": ('网关 %s', 'Gateway %s'),
+    "d107": ('外网 %s', 'Internet %s'),
+    "d109": ('名称', 'Name'),
+    "d110": ('来源', 'Source'),
+    "d113": ('LanSplice v%s · 网络体检　·　由 © 永远的兰兰 制作　·　'
+             '报告不含任何加密密钥，可放心转发',
+             'LanSplice v%s · Network checkup　·　by © Lanlan Eternal　·　'
+             'this report contains no keys and is safe to forward'),
+    # 常见端口的中文名（报告里 47820（LanSplice 传输）那种写法）
+    "d120": ('SMB 共享', 'SMB share'),
+    "d121": ('NAS / 路由器', 'NAS / router'),
+    "d122": ('HTTP 代理', 'HTTP proxy'),
+    "d123": ('打印机', 'printer'),
+    "d124": ('LanSplice 传输', 'LanSplice transfer'),
+    "d125": ('LanSplice 手机页', 'LanSplice phone page'),
 }
 
 LANGS = ("zh", "en")
