@@ -65,7 +65,7 @@ Author: © Lanlan Eternal (永远的兰兰)
 | Phytium / Kunpeng / Loongson | ⚠️ Protocol is architecture-agnostic, but **not yet tested on real hardware** |
 | macOS (Intel / Apple Silicon) | ⚠️ Native build available, **but not verified on a real Mac yet**: run from source, or build a `.app` with `build_macos.sh`; see [docs/macos.md](docs/macos.md) (no Mac? use browser mode: [docs/mac-now.md](docs/mac-now.md)) |
 
-**One file, no decision to make: `LanSplice-v2.1.0.exe`.**
+**One file, no decision to make: `LanSplice-v2.1.1.exe`.**
 
 It is a 32-bit build. 64-bit Windows runs it natively through WoW64 — double-click and it
 just works. Task Manager will label it "(32 bit)"; that is expected. **You never need to know
@@ -297,7 +297,7 @@ UOS, Kylin V10, Deepin, Ubuntu, Debian, CentOS and openEuler all work; Phytium /
 Hygon / Zhaoxin (x86_64) and Loongson (LoongArch) interoperate without ceremony, because the
 protocol is byte-level and does not care about the CPU.
 
-Download **[LanSplice-2.1.0-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.1.0-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
+Download **[LanSplice-2.1.1-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.1.1-linux-kit.tar.gz)** (~3.2 MB, ships the offline dependency wheels), extract it, then:
 
 ```sh
 sudo sh install.sh
@@ -544,6 +544,23 @@ independent of this project's MIT terms.
 ---
 
 ## Changelog
+
+**v2.1.1** — "Allow through firewall" was missing the phone's port
+- **Fixes a bug a real user hit**: the phone page would never open, just
+  `ERR_CONNECTION_TIMED_OUT`. The one-click firewall rule only created TCP 47820 (file transfer)
+  and UDP 47821 (discovery) and **missed TCP 47822**, which is the web page the phone opens —
+  the 53 KB Android APK is a WebView shell that loads exactly that page. All three rules are
+  created now.
+- **The status light used to lie**: with 47822 closed, transfers, discovery and the status light
+  all looked fine and only the phone timed out. The check now covers 47822 too, so a missing rule
+  shows up as red and points at the real cause.
+- This stayed hidden because every release ships a new exe filename, and the Windows
+  "allow access" prompt on first run creates a **per-program** rule (port `Any`) that lets 47822
+  through by accident. Only someone who clicked "Allow through firewall" first and then tried a
+  phone would ever hit it.
+- If you already clicked "Allow through firewall" before, click it once more after upgrading and
+  the missing rule is added — no manual `netsh`.
+- Protocol untouched — v2.1.1 still talks to 2.1.0, 1.9.2 and the Android app.
 
 **v2.1.0** — pick several devices, send once
 - **Group send**: the device list is now multi-select (Ctrl-click, Shift-click). Pick five
