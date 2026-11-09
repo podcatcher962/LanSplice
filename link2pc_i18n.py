@@ -718,7 +718,7 @@ S = {
         '开始重新整理本软件的防火墙规则：\n\n'
         '  1. 删掉本软件以前版本建的规则（LanSplice、Link2PC 开头的都清掉），\n'
         '     包括第一次启动时你点过「允许」、系统按程序路径自动建的那条\n'
-        '  2. 重建两条按端口的规则：TCP %d 传文件、UDP %d 内网发现\n'
+        '  2. 重建三条按端口的规则：TCP %d 传文件、UDP %d 内网发现、TCP %d 手机网页\n'
         '  3. 只允许这三个内网地址连进来：192.168.x.x（家里路由器最常见）、\n'
         '     10.x.x.x（公司常见）、172.16~31.x.x。公网地址进不来\n\n'
         '用的是 Windows 自带的 netsh 命令，不写脚本文件、不碰注册表。\n'
@@ -727,7 +727,8 @@ S = {
         "  1. Delete the rules older versions left behind (anything named LanSplice* or\n"
         "     Link2PC*), including the one Windows created by program path when you\n"
         "     clicked Allow on first launch\n"
-        "  2. Create two rules by port: TCP %d for file transfer, UDP %d for LAN discovery\n"
+        "  2. Create three rules by port: TCP %d for file transfer, UDP %d for LAN discovery,\n"
+        "     and TCP %d for the phone web page (the Android APK loads that page too)\n"
         "  3. Allow only these private ranges in: 192.168.x.x (most home routers),\n"
         "     10.x.x.x (common at work), 172.16-31.x.x. Internet addresses can't get in\n\n"
         "Uses the built-in netsh command: no script files, no registry edits.\n"
@@ -758,8 +759,8 @@ S = {
         ' (enabled)',
     ),
     "g184": (
-        '（未生效，检查是否授权成功）',
-        ' (not active — check that you approved the UAC prompt)',
+        '（未生效，多半是没拿到管理员授权）',
+        ' (not active — likely no admin approval)',
     ),
     "g185": (
         '接收端已自动重启，新规则立即生效，不用再关程序了。',
@@ -2019,13 +2020,13 @@ S = {
         '请再点一次「一键放行」。如果还是这样，多半是这两种情况：\n'
         '· 公司或学校的域策略规定了规则，本机改不动\n'
         '· 装了第三方安全软件，它接管了防火墙\n\n'
-        '这两种都要管理员放行 TCP %d 与 UDP %d（只对内网）。\n'
+        '这两种都要管理员放行 TCP %d、UDP %d 与 TCP %d（只对内网）。\n'
         '把这一屏截图发给他，比转述快。',
         "The firewall rules didn't take effect this time.\n\n"
         "Click 'Allow in firewall' again. If it still fails, it's usually one of two things:\n"
         "· a domain policy from work or school fixes the rules, so this machine can't change them\n"
         "· a third-party security suite has taken over the firewall\n\n"
-        "Either way an administrator has to allow TCP %d and UDP %d (private networks only).\n"
+        "Either way an administrator has to allow TCP %d, UDP %d and TCP %d (private networks only).\n"
         "A screenshot of this message is the quickest thing to send them.",
     ),
     "g478": (
