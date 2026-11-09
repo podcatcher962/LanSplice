@@ -56,7 +56,7 @@
 | 飞腾 / 鲲鹏 / 龙芯 | ⚠️ 协议与架构无关，但**尚未在真机上验证** |
 | macOS（Intel / Apple Silicon） | ⚠️ 有原生版，**但未在真机 Mac 上验证**：源码可直接跑，也可用 `build_macos.sh` 打成 `.app`；见 [docs/macos.md](docs/macos.md)（还没 Mac？用浏览器方式：[docs/mac-now.md](docs/mac-now.md)） |
 
-**Windows 只有一个文件，不用挑：`LanSplice-v2.1.0.exe`。**
+**Windows 只有一个文件，不用挑：`LanSplice-v2.1.1.exe`。**
 
 它是 32 位程序。64 位 Windows 自带兼容层（WoW64），双击就直接跑，
 跟普通程序没区别，任务管理器里会显示「32 位」——这是正常的。
@@ -274,7 +274,7 @@ LanSplice.exe version
 飞腾 / 鲲鹏（ARM64）、海光 / 兆芯（x86_64）、龙芯（LoongArch）之间照样互通 ——
 协议是字节级的，跟 CPU 架构无关。
 
-下载 **[LanSplice-2.1.0-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.1.0-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
+下载 **[LanSplice-2.1.1-linux-kit.tar.gz](https://github.com/podcatcher962/LanSplice/releases/latest/download/LanSplice-2.1.1-linux-kit.tar.gz)**（约 3.2 MB，含离线依赖轮子），解开后：
 
 ```sh
 sudo sh install.sh
@@ -569,6 +569,19 @@ pyinstaller -F -w --name LanSplice \
 ---
 
 ## 更新记录
+
+**v2.1.1** — 「一键放行」漏了手机网页那个端口
+- **修一个真被人踩到的 bug**：手机扫码打不开、一直 `ERR_CONNECTION_TIMED_OUT`。
+  「一键放行」原来只建了 TCP 47820（传文件）和 UDP 47821（找设备），
+  **漏了手机网页端 / 安卓 APK 用的 TCP 47822**（那个 53 KB 的 APK 是 WebView 壳，
+  加载的就是电脑上的这一页）。现在三条规则一起建。
+- **更坏的是灯会骗人**：端口没放行时，传文件、找设备、状态灯全是正常的绿，
+  只有手机端超时。现在状态判定也把 47822 算进去，缺了就是红的，指向明确。
+- 这个缺口一直藏着，是因为每次发版都换了 exe 文件名，Windows 第一次联网时弹的
+  「是否允许访问」点了「允许」会顺手建一条**按程序**的规则（端口 `Any`），
+  47822 顺带就通了。只有先点「一键放行」再拿手机试的人才会撞上。
+- 已经点过「一键放行」的老用户，升级后再点一次就会补上这条规则，不用手动加。
+- 协议没动 —— 2.1.1 照样能和 2.1.0、1.9.2、安卓版互通。
 
 **v2.1.0** — 选中几台，发一次就好
 - **群发**：设备列表支持多选（Ctrl 点选、Shift 连选）。选中五台、把文件丢进清单、点一次发送，
