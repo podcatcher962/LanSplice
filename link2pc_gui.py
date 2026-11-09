@@ -881,7 +881,7 @@ def _fw_prog_path(raw):
         return ""
 
 
-def parse_fw_status(out, expected_exe, ports=None):
+def parse_fw_status(out, expected_exe, ports=None, web_port=None):
     """
     解析「防火墙状态」那段 PowerShell 的输出。
 
@@ -913,6 +913,16 @@ def parse_fw_status(out, expected_exe, ports=None):
     except Exception:
         want_ports = ()
     tcp_port = want_ports[0] if want_ports else L.TCP_PORT
+    # v2.1.1：手机网页端（也是 53 KB APK 里那个 WebView 加载的页面）走另一个
+    # TCP 端口。它没被放行时，传文件、找设备都正常、状态灯也是绿的，
+    # 手机却一直超时——这种「绿灯骗人」比红灯更坏，所以一起判。
+    need_ports = [tcp_port]
+    try:
+        _wp = int(web_port or 0)
+    except Exception:
+        _wp = 0
+    if _wp and _wp not in need_ports:
+        need_ports.append(_wp)
 
     want = _fw_prog_path(expected_exe)
 
@@ -920,7 +930,8 @@ def parse_fw_status(out, expected_exe, ports=None):
     alive = 0
     alive_in = 0           # 入站且启用：真正能不能收到文件只看这个
     alive_unknown = 0      # 老格式行，读不出方向
-    covered = False        # 有按端口的规则放行了 TCP 端口
+    tcp_specs = []         # 按端口规则给出的 LocalPort 字段
+    covered = False        # 有按端口的规则把要用的 TCP 端口全放行了
     self_ok = False        # 有按程序的规则绑着当前 exe
     progs = set()
     has_port_info = False  # 至少有一条入站规则给出了端口字段（能据此判断）
@@ -960,8 +971,11 @@ def parse_fw_status(out, expected_exe, ports=None):
             progs.add(np)                 # 按程序的规则
         else:
             has_port_info = True          # 按端口的规则，只有端口说了算
-            if _port_spec_has(portspec, tcp_port):
-                covered = True
+            tcp_specs.append(portspec)
+
+    if tcp_specs:
+        covered = all(any(_port_spec_has(s, p) for s in tcp_specs)
+                      for p in need_ports)
 
     if want and want in progs:
         self_ok = True
@@ -1009,6 +1023,7 @@ class App:
     # 出现「删不掉旧规则、于是新规则加不上」的怪现象。
     FW_RULE_TCP = "LanSplice-TCP"
     FW_RULE_UDP = "LanSplice-UDP"
+    FW_RULE_WEB = "LanSplice-Web"      # v2.1.1：手机网页端与 APK 走 TCP web_port
 
     def __init__(self, root):
         self.root = root
@@ -4342,8 +4357,15 @@ class App:
             port = int(self.cfg.get("tcp_port") or L.TCP_PORT)
         except Exception:
             port = L.TCP_PORT
+        # 手机网页端同样要判：规则里没放行它，手机就是打不开，
+        # 而灯却会因为 tcp_port 被放行而变绿。
+        try:
+            web_port = int(self.cfg.get("web_port") or WEB.WEB_PORT)
+        except Exception:
+            web_port = WEB.WEB_PORT
         alive, pub, stale = parse_fw_status(out, want,
-                                            ports=(port, L.DISCOVERY_PORT))
+                                            ports=(port, L.DISCOVERY_PORT),
+                                            web_port=web_port)
         return alive, pub, stale, out, want
 
     def _refresh_fw_status(self):
@@ -4745,7 +4767,7 @@ class App:
             names.append(n)
         return names
 
-    def _fw_commands(self, port, extra=None):
+    def _fw_commands(self, port, extra=None, web_port=None):
         """
         「一键放行」要执行的 netsh 命令，一条一行。
 
@@ -4768,7 +4790,7 @@ class App:
           换版本时文件名从 v1.7.5 变成 v1.7.6，路径一变按 exe 的规则就
           管不到新文件了，用户会被反复要求放行。
         ＊ 来源仍然只限内网三段 + 回环，公网进不来。
-        ＊ 代价照旧写在 README 里：本机别的程序若也监听这两个端口，
+        ＊ 代价照旧写在 README 里：本机别的程序若也监听这三个端口，
           内网同样能连到它 —— 这是我们按端口放行的取舍，不藏着。
         ＊ extra=v1.7.7 起由 `_fw_stale_names()` 扫出来的历史规则名，
           把带版本号的那种一起删干净。
@@ -4785,7 +4807,7 @@ class App:
         # 按名字删是精确匹配，不用遍历全表 —— 规则上千条的机器上，
         # 遍历一次要好几秒，用户面对的就是一个不动的对话框。
         # 带版本号的 exe 规则名（lansplice-v1.7.6）写死不全，靠 extra 补。
-        names = [self.FW_RULE_TCP, self.FW_RULE_UDP,
+        names = [self.FW_RULE_TCP, self.FW_RULE_UDP, self.FW_RULE_WEB,
                  "LanSplice", "Link2PC", "Link2PC-TCP", "Link2PC-UDP"]
         for n in (extra or []):
             if n not in names:
@@ -4798,6 +4820,21 @@ class App:
                 "dir=in action=allow protocol=%s localport=%d "
                 "remoteip=%s profile=any enable=yes"
                 % (proto, proto, pnum, rng))
+        # v2.1.1：手机网页端（含 53 KB 的 APK，它是个 WebView 壳，加载的就是这一页）
+        # 走的是 TCP web_port，和上面两条一样按端口、限内网来源。
+        # 漏掉这一条的后果是：传文件、找设备都正常，手机打开页面却一直超时，
+        # 状态灯还是绿的 —— 比红灯更糟，用户根本不知道往哪查。
+        if web_port:
+            try:
+                wp = int(web_port)
+            except Exception:
+                wp = 0
+            if wp and wp not in (port, L.DISCOVERY_PORT):
+                cmds.append(
+                    "netsh advfirewall firewall add rule name=%s "
+                    "dir=in action=allow protocol=TCP localport=%d "
+                    "remoteip=%s profile=any enable=yes"
+                    % (self.FW_RULE_WEB, wp, rng))
         return cmds
 
     def _fw_run_elevated(self, cmds, timeout=120):
@@ -4961,13 +4998,15 @@ class App:
             self._fw_linux_dialog()
             return
         port = int(self.cfg["tcp_port"])
+        web_port = int(self.cfg.get("web_port") or WEB.WEB_PORT)
         if not quick:
             if not messagebox.askyesno(
-                    APP_NAME, _t("g177") % (port, L.DISCOVERY_PORT),
+                    APP_NAME, _t("g177") % (port, L.DISCOVERY_PORT, web_port),
                     parent=self.root):
                 return
 
-        cmds = self._fw_commands(port, extra=self._fw_stale_names())
+        cmds = self._fw_commands(port, extra=self._fw_stale_names(),
+                                 web_port=web_port)
         ok_run, detail = self._fw_run_elevated(cmds)
         if not ok_run:
             if detail == "cancelled":
@@ -4996,7 +5035,7 @@ class App:
 
         if stale:
             # 没生效：说清楚，别让人以为已经好了
-            msg = _t("g477") % (port, L.DISCOVERY_PORT)
+            msg = _t("g477") % (port, L.DISCOVERY_PORT, web_port)
             self.lbl_status.config(text=_t("g478"))
             messagebox.showwarning(APP_NAME, msg, parent=self.root)
             self._refresh_fw_status()
